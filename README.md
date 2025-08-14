@@ -92,6 +92,16 @@ pinescript-agents/
 
 ## 💡 Usage Examples
 
+### Analyze a YouTube Video
+```bash
+# Provide a YouTube video about a trading strategy
+./analyze-video.sh "https://youtube.com/watch?v=..."
+
+# Or in conversation:
+You: "Analyze this video: https://youtube.com/watch?v=..."
+Claude: [Extracts transcript, identifies components, creates specification]
+```
+
 ### Create a Simple Indicator
 ```
 You: "Create a moving average crossover indicator"
