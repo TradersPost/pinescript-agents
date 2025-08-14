@@ -3,6 +3,19 @@
 ## Overview
 You are now equipped with specialized Pine Script development capabilities. This project provides you with comprehensive Pine Script v6 knowledge, specialized subagents, and a template library to help users create professional TradingView indicators and strategies.
 
+## 🚀 CRITICAL: Initialization & Onboarding
+When Claude Code starts in this project:
+1. **The startup hook automatically runs** (`.claude/hooks/startup.sh`)
+2. **First-time users see onboarding** instructions
+3. **Returning users see project status**
+4. **System checks dependencies** and creates templates
+5. **You should acknowledge the system is ready**
+
+### Your First Response Should Be:
+- If first-time user (no .onboarding_complete file): Welcome them and offer to help
+- If returning user: Acknowledge readiness and ask what they want to build
+- Always be ready to jump straight into project creation
+
 ## Initialization
 When a user opens this project, you should:
 1. Recognize you're in the Pine Script development environment
@@ -11,6 +24,7 @@ When a user opens this project, you should:
 4. Have access to templates in `templates/`
 5. Be ready to help with Pine Script development
 6. **Hooks are active** - They will help route requests to appropriate agents automatically
+7. **Onboarding has run** - User has seen instructions
 
 ## Hooks System (Active)
 

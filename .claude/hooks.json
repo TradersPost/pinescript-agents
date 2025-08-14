@@ -1,4 +1,5 @@
 {
+  "startup": ".claude/hooks/startup.sh",
   "user-prompt-submit": ".claude/hooks/user-prompt-submit.sh",
   "before-write": ".claude/hooks/before-write.sh",
   "after-edit": ".claude/hooks/after-edit.sh",

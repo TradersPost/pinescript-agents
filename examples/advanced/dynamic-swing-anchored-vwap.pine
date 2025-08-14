@@ -1,0 +1,35 @@
+//@version=5
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+// © Zeiierman {
+//~~ Tooltips {
+// ~~ Variable {
+var string t1 = "Number of bars used to detect swing highs and lows. Larger values identify bigger swings."
+var string t2 = "Controls how quickly the VWAP adjusts to new price action. Lower values make the VWAP react faster."
+var string t3 = "When enabled, the VWAP line changes color automatically based on market volatility."
+var string t4 = "Controls how strongly volatility influences the VWAP reaction speed. Higher values increase sensitivity."
+var string t5 = "Color used for swing high/low labels based on the chart position."
+var string t6 = "Color used for swing low labels when marking pivot points."
+var string t7 = "Color used for VWAP lines when in an uptrend."
+var string t8 = "Color used for VWAP lines when in a downtrend."
+var string t9 = "Width of the VWAP lines drawn on the chart."
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~}
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~}
+
+// ~~ Inputs {
+prd      = input.int(50, title="Swing Period", minval=2, group="Swing Points", tooltip=t1)
+baseAPT  = input.float(30, "Adaptive Price Tracking", minval=0, step=1, group="Swing Points", tooltip=t2)
+useAdapt = input.bool(false, "Adapt APT by ATR ratio", group="Swing Points", tooltip=t3)
+volBias  = input.float(0.5, "Volatility Bias", minval=0.1, step=0.1, group="Swing Points", tooltip=t4)
+
+high5    = input.color(color.new(color.time, title="Swing Labels", group="Style", inline="Swing", tooltip=t5)
+lowS     = input.color(color.red, title="", group="Style", inline="Swing", tooltip=t6)
+S        = input.color(color.lime, title="Up Color", group="Style", inline="VWAP", tooltip=t7)
+R        = input.color(color.red, title="Down Color", group="Style", inline="VWAP", tooltip=t8)
+xx       = input.int(2, minval=1, title="", group="Style", inline="VWAP", tooltip=t9)
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~}
+
+// ~~ Global Variable {
+h = bar_index
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~}
