@@ -1,6 +1,6 @@
 {
   "success": true,
-  "summary": "\n\ud83d\udcf9 VIDEO ANALYSIS COMPLETE\n========================\n\n**Source**: BEST MACD Trading Strategy [86% Win Rate]\n**Author**: TradingLab\n\n**Detected Type**: STRATEGY\n**Complexity**: 8/10\n**Strategy Style**: momentum\n\n**Main Components Identified**:\n\u2022 Indicators: macd, sma, momentum, ema, moving average\n\u2022 Patterns: divergence, convergence, cross\n\u2022 Timeframes: \n\n**Trading Logic**:\n\u2022 Entry: 3 conditions found\n\u2022 Exit: 2 conditions found\n\u2022 Risk: 0 rules found\n\n**Feasibility**: PARTIAL\n\nIs this understanding correct? Reply 'yes' to proceed or describe what needs adjustment.\n",
+  "summary": "\n\ud83d\udcf9 VIDEO ANALYSIS COMPLETE\n========================\n\n**Source**: BEST MACD Trading Strategy [86% Win Rate]\n**Author**: TradingLab\n\n**Detected Type**: STRATEGY\n**Complexity**: 8/10\n**Strategy Style**: momentum\n\n**Main Components Identified**:\n\u2022 Indicators: moving average, sma, momentum, macd, ema\n\u2022 Patterns: divergence, convergence, trend\n\u2022 Timeframes: \n\n**Trading Logic**:\n\u2022 Entry: 3 conditions found\n\u2022 Exit: 2 conditions found\n\u2022 Risk: 0 rules found\n\n**Feasibility**: PARTIAL\n\nIs this understanding correct? Reply 'yes' to proceed or describe what needs adjustment.\n",
   "detailed_spec": {
     "video_source": {
       "title": "BEST MACD Trading Strategy [86% Win Rate]",
@@ -9,16 +9,16 @@
     },
     "detected_type": "strategy",
     "main_indicators": [
-      "macd",
+      "moving average",
       "sma",
       "momentum",
-      "ema",
-      "moving average"
+      "macd",
+      "ema"
     ],
     "trading_patterns": [
       "divergence",
       "convergence",
-      "cross"
+      "trend"
     ],
     "strategy_type": "momentum",
     "timeframes": [],
