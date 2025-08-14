@@ -1,0 +1,80 @@
+//@version=6
+indicator("Multi-Timeframe Trend Alignment", "MTF Trend", overlay=false)
+
+// === INPUTS ===
+ma_type = input.string("EMA", "Moving Average Type", options=["SMA", "EMA", "WMA"], group="Settings")
+ma_length = input.int(20, "MA Length", minval=5, maxval=200, group="Settings")
+
+// Timeframes
+tf1 = input.timeframe("15", "Timeframe 1", group="Timeframes")
+tf2 = input.timeframe("1H", "Timeframe 2", group="Timeframes") 
+tf3 = input.timeframe("4H", "Timeframe 3", group="Timeframes")
+tf4 = input.timeframe("1D", "Timeframe 4", group="Timeframes")
+
+// Colors
+bull_color = input.color(color.green, "Bullish Color", group="Colors")
+bear_color = input.color(color.red, "Bearish Color", group="Colors")
+neutral_color = input.color(color.gray, "Neutral Color", group="Colors")
+
+// === FUNCTIONS ===
+// Get moving average based on type
+get_ma(src, length, ma_type) =>
+    switch ma_type
+        "SMA" => ta.sma(src, length)
+        "EMA" => ta.ema(src, length)
+        "WMA" => ta.wma(src, length)
+        => ta.ema(src, length)
+
+// Get trend direction
+get_trend(ma_value, close_value) =>
+    if close_value > ma_value
+        1  // Bullish
+    else if close_value < ma_value
+        -1 // Bearish
+    else
+        0  // Neutral
+
+// === MAIN LOGIC ===
+// Calculate MA for each timeframe
+ma_tf1 = request.security(syminfo.tickerid, tf1, get_ma(close, ma_length, ma_type), lookahead=barmerge.lookahead_off)
+ma_tf2 = request.security(syminfo.tickerid, tf2, get_ma(close, ma_length, ma_type), lookahead=barmerge.lookahead_off)
+ma_tf3 = request.security(syminfo.tickerid, tf3, get_ma(close, ma_length, ma_type), lookahead=barmerge.lookahead_off)
+ma_tf4 = request.security(syminfo.tickerid, tf4, get_ma(close, ma_length, ma_type), lookahead=barmerge.lookahead_off)
+
+// Get close prices for each timeframe
+close_tf1 = request.security(syminfo.tickerid, tf1, close, lookahead=barmerge.lookahead_off)
+close_tf2 = request.security(syminfo.tickerid, tf2, close, lookahead=barmerge.lookahead_off)
+close_tf3 = request.security(syminfo.tickerid, tf3, close, lookahead=barmerge.lookahead_off)
+close_tf4 = request.security(syminfo.tickerid, tf4, close, lookahead=barmerge.lookahead_off)
+
+// Calculate trends
+trend_tf1 = get_trend(ma_tf1, close_tf1)
+trend_tf2 = get_trend(ma_tf2, close_tf2)
+trend_tf3 = get_trend(ma_tf3, close_tf3)
+trend_tf4 = get_trend(ma_tf4, close_tf4)
+
+// Calculate trend alignment score
+trend_score = trend_tf1 + trend_tf2 + trend_tf3 + trend_tf4
+
+// === PLOTTING ===
+// Plot individual timeframe trends
+plot(trend_tf1, title="TF1 Trend", color=trend_tf1 > 0 ? bull_color : trend_tf1 < 0 ? bear_color : neutral_color, linewidth=2, offset=3)
+plot(trend_tf2, title="TF2 Trend", color=trend_tf2 > 0 ? bull_color : trend_tf2 < 0 ? bear_color : neutral_color, linewidth=2, offset=2)
+plot(trend_tf3, title="TF3 Trend", color=trend_tf3 > 0 ? bull_color : trend_tf3 < 0 ? bear_color : neutral_color, linewidth=2, offset=1)
+plot(trend_tf4, title="TF4 Trend", color=trend_tf4 > 0 ? bull_color : trend_tf4 < 0 ? bear_color : neutral_color, linewidth=2, offset=0)
+
+// Plot trend alignment score
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
+hline(4, "All Bullish", color=color.green, linestyle=hline.style_solid)
+hline(-4, "All Bearish", color=color.red, linestyle=hline.style_solid)
+
+plot(trend_score, title="Trend Alignment", color=trend_score > 2 ? bull_color : trend_score < -2 ? bear_color : neutral_color, linewidth=3)
+
+// Background color based on alignment
+bgcolor(trend_score == 4 ? color.new(color.green, 90) : trend_score == -4 ? color.new(color.red, 90) : na, title="Full Alignment")
+
+// === ALERTS ===
+alertcondition(trend_score == 4, "All Timeframes Bullish", "All timeframes are bullish aligned")
+alertcondition(trend_score == -4, "All Timeframes Bearish", "All timeframes are bearish aligned")
+alertcondition(ta.crossover(trend_score, 2), "Strong Bullish Alignment", "Strong bullish trend alignment")
+alertcondition(ta.crossunder(trend_score, -2), "Strong Bearish Alignment", "Strong bearish trend alignment")

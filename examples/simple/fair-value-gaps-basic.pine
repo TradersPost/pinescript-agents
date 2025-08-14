@@ -1,0 +1,58 @@
+//@version=6
+indicator("Fair Value Gaps - Basic", "FVG Basic", overlay=true, max_boxes_count=100)
+
+// === INPUTS ===
+show_bullish = input.bool(true, "Show Bullish FVG", group="Display")
+show_bearish = input.bool(true, "Show Bearish FVG", group="Display")
+fvg_color_bull = input.color(color.new(color.green, 80), "Bullish FVG", group="Colors")
+fvg_color_bear = input.color(color.new(color.red, 80), "Bearish FVG", group="Colors")
+max_boxes = input.int(50, "Max FVG Boxes", minval=1, maxval=100, group="Settings")
+
+// === VARIABLES ===
+var box[] bullish_fvgs = array.new<box>()
+var box[] bearish_fvgs = array.new<box>()
+
+// === FUNCTIONS ===
+// Check for bullish FVG (gap up)
+is_bullish_fvg() =>
+    high[2] < low[0] and close[1] > open[1]
+
+// Check for bearish FVG (gap down)  
+is_bearish_fvg() =>
+    low[2] > high[0] and close[1] < open[1]
+
+// Remove old boxes to stay within limit
+cleanup_boxes(boxes_array) =>
+    while array.size(boxes_array) > max_boxes
+        old_box = array.shift(boxes_array)
+        box.delete(old_box)
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    // Bullish FVG Detection
+    if show_bullish and is_bullish_fvg()
+        fvg_top = low[0]
+        fvg_bottom = high[2]
+        fvg_left = bar_index - 1
+        fvg_right = bar_index + 20
+        
+        new_box = box.new(fvg_left, fvg_top, fvg_right, fvg_bottom, 
+                         bgcolor=fvg_color_bull, border_color=color.new(color.green, 0))
+        array.push(bullish_fvgs, new_box)
+        cleanup_boxes(bullish_fvgs)
+    
+    // Bearish FVG Detection
+    if show_bearish and is_bearish_fvg()
+        fvg_top = low[2]
+        fvg_bottom = high[0]
+        fvg_left = bar_index - 1
+        fvg_right = bar_index + 20
+        
+        new_box = box.new(fvg_left, fvg_top, fvg_right, fvg_bottom,
+                         bgcolor=fvg_color_bear, border_color=color.new(color.red, 0))
+        array.push(bearish_fvgs, new_box)
+        cleanup_boxes(bearish_fvgs)
+
+// === ALERTS ===
+alertcondition(is_bullish_fvg(), "Bullish FVG", "Bullish Fair Value Gap detected")
+alertcondition(is_bearish_fvg(), "Bearish FVG", "Bearish Fair Value Gap detected")

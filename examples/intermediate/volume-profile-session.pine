@@ -1,0 +1,234 @@
+//@version=6
+indicator("Volume Profile - Session", "VP Session", overlay=true, max_boxes_count=500)
+
+// === INPUTS ===
+session_type = input.string("Daily", "Session Type", options=["Daily", "Weekly", "Monthly"], group="Session")
+profile_levels = input.int(20, "Profile Levels", minval=10, maxval=50, group="Profile")
+show_poc = input.bool(true, "Show POC", group="Display")
+show_vah_val = input.bool(true, "Show Value Area", group="Display")
+value_area_pct = input.float(70.0, "Value Area %", minval=50.0, maxval=95.0, group="Profile")
+extend_right = input.int(20, "Extend Right", minval=5, maxval=100, group="Display")
+
+// Colors
+poc_color = input.color(color.yellow, "POC Color", group="Colors")
+vah_color = input.color(color.blue, "VAH Color", group="Colors")  
+val_color = input.color(color.blue, "VAL Color", group="Colors")
+profile_color = input.color(color.new(color.gray, 70), "Profile Color", group="Colors")
+
+// === TYPES ===
+type VolumeLevel
+    float price
+    float volume
+    int bar_count
+
+type VolumeProfile
+    array<VolumeLevel> levels
+    float poc_price
+    float vah_price
+    float val_price
+    float session_high
+    float session_low
+    int session_start
+    int session_end
+
+// === VARIABLES ===
+var VolumeProfile current_profile = VolumeProfile.new()
+var box[] profile_boxes = array.new<box>()
+var line[] profile_lines = array.new<line>()
+
+// === FUNCTIONS ===
+// Check if new session
+is_new_session() =>
+    switch session_type
+        "Daily" => timeframe.change("1D")
+        "Weekly" => timeframe.change("1W")
+        "Monthly" => timeframe.change("1M")
+        => false
+
+// Initialize profile
+init_profile() =>
+    current_profile.levels := array.new<VolumeLevel>()
+    current_profile.session_high := high
+    current_profile.session_low := low
+    current_profile.session_start := bar_index
+    current_profile.session_end := bar_index
+
+// Update session bounds
+update_session_bounds() =>
+    current_profile.session_high := math.max(current_profile.session_high, high)
+    current_profile.session_low := math.min(current_profile.session_low, low)
+    current_profile.session_end := bar_index
+
+// Calculate price level from tick
+get_price_level(price, session_high, session_low, num_levels) =>
+    level_height = (session_high - session_low) / num_levels
+    level_index = math.floor((price - session_low) / level_height)
+    level_index := math.max(0, math.min(num_levels - 1, level_index))
+    session_low + (level_index * level_height)
+
+// Add volume to profile
+add_volume_to_profile(bar_volume, bar_high, bar_low, bar_close) =>
+    if array.size(current_profile.levels) == 0
+        // Initialize levels array
+        level_height = (current_profile.session_high - current_profile.session_low) / profile_levels
+        for i = 0 to profile_levels - 1
+            level_price = current_profile.session_low + (i * level_height)
+            new_level = VolumeLevel.new(level_price, 0.0, 0)
+            array.push(current_profile.levels, new_level)
+    
+    // Distribute volume across price levels the bar touched
+    num_ticks = math.max(1, math.round((bar_high - bar_low) / syminfo.mintick))
+    volume_per_tick = bar_volume / num_ticks
+    
+    // Add volume to each level the bar touched
+    for price = bar_low to bar_high by syminfo.mintick
+        level_price = get_price_level(price, current_profile.session_high, 
+                                     current_profile.session_low, profile_levels)
+        
+        // Find corresponding level and add volume
+        for i = 0 to array.size(current_profile.levels) - 1
+            level = array.get(current_profile.levels, i)
+            if math.abs(level.price - level_price) < syminfo.mintick
+                level.volume += volume_per_tick
+                level.bar_count += 1
+                array.set(current_profile.levels, i, level)
+                break
+
+// Calculate POC and Value Area
+calculate_profile_metrics() =>
+    if array.size(current_profile.levels) == 0
+        return
+    
+    // Find POC (Point of Control)
+    max_volume = 0.0
+    poc_price = 0.0
+    total_volume = 0.0
+    
+    for i = 0 to array.size(current_profile.levels) - 1
+        level = array.get(current_profile.levels, i)
+        total_volume += level.volume
+        if level.volume > max_volume
+            max_volume := level.volume
+            poc_price := level.price
+    
+    current_profile.poc_price := poc_price
+    
+    // Calculate Value Area (70% of volume around POC)
+    target_volume = total_volume * (value_area_pct / 100.0)
+    accumulated_volume = max_volume
+    
+    // Find POC index
+    poc_index = 0
+    for i = 0 to array.size(current_profile.levels) - 1
+        level = array.get(current_profile.levels, i)
+        if level.price == poc_price
+            poc_index := i
+            break
+    
+    // Expand around POC to reach target volume
+    upper_index = poc_index
+    lower_index = poc_index
+    
+    while accumulated_volume < target_volume and (upper_index < array.size(current_profile.levels) - 1 or lower_index > 0)
+        upper_vol = 0.0
+        lower_vol = 0.0
+        
+        if upper_index < array.size(current_profile.levels) - 1
+            upper_level = array.get(current_profile.levels, upper_index + 1)
+            upper_vol := upper_level.volume
+        
+        if lower_index > 0
+            lower_level = array.get(current_profile.levels, lower_index - 1)
+            lower_vol := lower_level.volume
+        
+        if upper_vol >= lower_vol and upper_index < array.size(current_profile.levels) - 1
+            upper_index += 1
+            accumulated_volume += upper_vol
+        else if lower_index > 0
+            lower_index -= 1
+            accumulated_volume += lower_vol
+    
+    // Set VAH and VAL
+    vah_level = array.get(current_profile.levels, upper_index)
+    val_level = array.get(current_profile.levels, lower_index)
+    current_profile.vah_price := vah_level.price
+    current_profile.val_price := val_level.price
+
+// Draw profile
+draw_profile() =>
+    if array.size(current_profile.levels) == 0
+        return
+    
+    // Clear old boxes and lines
+    for i = 0 to array.size(profile_boxes) - 1
+        box.delete(array.get(profile_boxes, i))
+    array.clear(profile_boxes)
+    
+    for i = 0 to array.size(profile_lines) - 1
+        line.delete(array.get(profile_lines, i))
+    array.clear(profile_lines)
+    
+    // Find max volume for scaling
+    max_volume = 0.0
+    for i = 0 to array.size(current_profile.levels) - 1
+        level = array.get(current_profile.levels, i)
+        max_volume := math.max(max_volume, level.volume)
+    
+    if max_volume == 0
+        return
+    
+    // Draw volume bars
+    bar_width = extend_right * 0.8
+    level_height = (current_profile.session_high - current_profile.session_low) / profile_levels
+    
+    for i = 0 to array.size(current_profile.levels) - 1
+        level = array.get(current_profile.levels, i)
+        if level.volume > 0
+            volume_width = math.round((level.volume / max_volume) * bar_width)
+            
+            profile_box = box.new(current_profile.session_end, level.price - level_height/2,
+                                 current_profile.session_end + volume_width, level.price + level_height/2,
+                                 bgcolor=profile_color, border_color=color.gray, border_width=1)
+            array.push(profile_boxes, profile_box)
+    
+    // Draw POC line
+    if show_poc
+        poc_line = line.new(current_profile.session_start, current_profile.poc_price,
+                           current_profile.session_end + extend_right, current_profile.poc_price,
+                           color=poc_color, width=2, style=line.style_solid)
+        array.push(profile_lines, poc_line)
+    
+    // Draw Value Area lines
+    if show_vah_val
+        vah_line = line.new(current_profile.session_start, current_profile.vah_price,
+                           current_profile.session_end + extend_right, current_profile.vah_price,
+                           color=vah_color, width=1, style=line.style_dashed)
+        array.push(profile_lines, vah_line)
+        
+        val_line = line.new(current_profile.session_start, current_profile.val_price,
+                           current_profile.session_end + extend_right, current_profile.val_price,
+                           color=val_color, width=1, style=line.style_dashed)
+        array.push(profile_lines, val_line)
+
+// === MAIN LOGIC ===
+if is_new_session()
+    // Draw previous session profile
+    if array.size(current_profile.levels) > 0
+        calculate_profile_metrics()
+        draw_profile()
+    
+    // Initialize new session
+    init_profile()
+
+// Update current session
+update_session_bounds()
+if barstate.isconfirmed
+    add_volume_to_profile(volume, high, low, close)
+
+// Draw current session profile on last bar
+if barstate.islast
+    calculate_profile_metrics()
+    draw_profile()
+
+// === PLOTTING ===
+bgcolor(is_new_session() ? color.new(color.blue, 95) : na, title="New Session")

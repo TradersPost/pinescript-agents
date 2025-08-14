@@ -6,7 +6,7 @@ A comprehensive Pine Script development environment powered by Claude Code's sub
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/pinescript-agents.git
+   git clone https://github.com/tosaha/pinescript-agents.git
    cd pinescript-agents
    ```
 
@@ -19,11 +19,21 @@ A comprehensive Pine Script development environment powered by Claude Code's sub
    claude code .
    ```
 
-3. **Start creating Pine Scripts!**
+3. **Run the START command for interactive setup**
+   ```bash
+   ./start
+   ```
+   This will guide you through:
+   - Creating custom scripts
+   - Analyzing YouTube videos
+   - Using templates
+   - Understanding capabilities
+
+4. **Or tell Claude directly what you want**
    ```
    "Create an RSI divergence indicator with alerts"
    "Build a mean reversion strategy using Bollinger Bands"
-   "Debug my Pine Script that's showing errors"
+   "Analyze this video: https://youtube.com/watch?v=..."
    ```
 
 ## 🤖 Specialized AI Agents

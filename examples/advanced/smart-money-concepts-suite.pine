@@ -1,0 +1,421 @@
+//@version=6
+indicator("Smart Money Concepts - Suite", "SMC Suite", overlay=true, 
+         max_boxes_count=500, max_lines_count=500, max_labels_count=200)
+
+// === INPUTS ===
+// Structure Settings
+structure_length = input.int(5, "Structure Length", minval=2, maxval=20, group="Structure")
+show_internal = input.bool(true, "Show Internal Structure", group="Structure")
+show_swing = input.bool(true, "Show Swing Structure", group="Structure")
+
+// Order Blocks
+ob_length = input.int(3, "Order Block Length", minval=2, maxval=10, group="Order Blocks")
+ob_filter_volume = input.bool(true, "Filter by Volume", group="Order Blocks")
+ob_volume_threshold = input.float(1.5, "Volume Threshold", minval=1.0, maxval=5.0, group="Order Blocks")
+
+// Fair Value Gaps
+fvg_filter_size = input.bool(true, "Filter FVG by Size", group="Fair Value Gaps")
+fvg_min_size = input.float(0.1, "Min FVG Size %", minval=0.01, maxval=2.0, group="Fair Value Gaps")
+
+// Liquidity
+liquidity_lookback = input.int(20, "Liquidity Lookback", minval=10, maxval=100, group="Liquidity")
+liquidity_threshold = input.float(0.1, "Price Threshold %", minval=0.01, maxval=1.0, group="Liquidity")
+
+// Multi-timeframe
+higher_tf = input.timeframe("4H", "Higher Timeframe", group="Multi-Timeframe")
+show_htf_structure = input.bool(true, "Show HTF Structure", group="Multi-Timeframe")
+
+// Display
+max_structures = input.int(10, "Max Structures", minval=5, maxval=20, group="Display")
+max_order_blocks = input.int(15, "Max Order Blocks", minval=5, maxval=30, group="Display")
+max_fvgs = input.int(20, "Max FVGs", minval=10, maxval=50, group="Display")
+
+// === TYPES ===
+type SwingPoint
+    int index
+    float price
+    bool is_high
+    string timeframe
+
+type Structure
+    SwingPoint point1
+    SwingPoint point2
+    string trend_direction
+    bool is_broken
+    string break_type  // "BOS" or "CHoCH"
+
+type OrderBlock
+    int left_bar
+    int right_bar
+    float top
+    float bottom
+    string direction  // "bullish" or "bearish"
+    bool is_mitigated
+    float volume_confirmation
+
+type FairValueGap
+    int left_bar
+    int right_bar
+    float top
+    float bottom
+    string direction  // "bullish" or "bearish"
+    bool is_filled
+    float gap_size
+
+type LiquidityPool
+    float price
+    int bar_index
+    string side  // "buyside" or "sellside"
+    int touch_count
+    bool is_swept
+
+// === VARIABLES ===
+var array<Structure> internal_structures = array.new<Structure>()
+var array<Structure> swing_structures = array.new<Structure>()
+var array<Structure> htf_structures = array.new<Structure>()
+var array<OrderBlock> order_blocks = array.new<OrderBlock>()
+var array<FairValueGap> fair_value_gaps = array.new<FairValueGap>()
+var array<LiquidityPool> liquidity_pools = array.new<LiquidityPool>()
+
+// Drawing arrays
+var box[] structure_boxes = array.new<box>()
+var line[] structure_lines = array.new<line>()
+var label[] structure_labels = array.new<label>()
+
+// === FUNCTIONS ===
+// Swing point detection
+get_swing_high(length) => ta.pivothigh(high, length, length)
+get_swing_low(length) => ta.pivotlow(low, length, length)
+
+// Market structure analysis
+analyze_market_structure(structures_array, new_point) =>
+    if array.size(structures_array) == 0
+        return
+    
+    last_structure = array.get(structures_array, array.size(structures_array) - 1)
+    
+    // Determine if structure is broken
+    structure_broken = false
+    break_type = ""
+    
+    if new_point.is_high
+        if not na(last_structure.point2) and new_point.price > last_structure.point2.price
+            if last_structure.trend_direction == "bearish"
+                break_type := "CHoCH"
+                structure_broken := true
+            else
+                break_type := "BOS"
+                structure_broken := true
+    else
+        if not na(last_structure.point2) and new_point.price < last_structure.point2.price
+            if last_structure.trend_direction == "bullish"
+                break_type := "CHoCH"
+                structure_broken := true
+            else
+                break_type := "BOS" 
+                structure_broken := true
+    
+    if structure_broken
+        last_structure.is_broken := true
+        last_structure.break_type := break_type
+        array.set(structures_array, array.size(structures_array) - 1, last_structure)
+    
+    // Create new structure
+    if array.size(structures_array) >= 1
+        prev_point = last_structure.point2
+        if not na(prev_point)
+            new_trend = new_point.is_high ? (new_point.price > prev_point.price ? "bullish" : "bearish") :
+                        (new_point.price < prev_point.price ? "bearish" : "bullish")
+            
+            new_structure = Structure.new(prev_point, new_point, new_trend, false, "")
+            array.push(structures_array, new_structure)
+            
+            // Limit array size
+            if array.size(structures_array) > max_structures
+                array.shift(structures_array)
+
+// Order block detection
+detect_order_blocks() =>
+    // Look for strong moves that break structure
+    vol_avg = ta.sma(volume, 20)
+    high_volume = volume > vol_avg * ob_volume_threshold
+    
+    // Bullish order block (after bearish break)
+    swing_low = get_swing_low(ob_length)
+    if not na(swing_low) and (not ob_filter_volume or high_volume[ob_length])
+        // Find the last bullish candle before the break
+        for i = 1 to ob_length + 5
+            if close[i] > open[i] and low[0] < swing_low  // Bearish break occurred
+                ob_top = high[i]
+                ob_bottom = low[i]
+                ob_left = bar_index - i
+                ob_right = bar_index
+                
+                new_ob = OrderBlock.new(ob_left, ob_right, ob_top, ob_bottom, 
+                                       "bullish", false, volume[i])
+                array.push(order_blocks, new_ob)
+                break
+    
+    // Bearish order block (after bullish break)
+    swing_high = get_swing_high(ob_length)
+    if not na(swing_high) and (not ob_filter_volume or high_volume[ob_length])
+        // Find the last bearish candle before the break
+        for i = 1 to ob_length + 5
+            if close[i] < open[i] and high[0] > swing_high  // Bullish break occurred
+                ob_top = high[i]
+                ob_bottom = low[i]
+                ob_left = bar_index - i
+                ob_right = bar_index
+                
+                new_ob = OrderBlock.new(ob_left, ob_right, ob_top, ob_bottom,
+                                       "bearish", false, volume[i])
+                array.push(order_blocks, new_ob)
+                break
+    
+    // Check for order block mitigation
+    for i = 0 to array.size(order_blocks) - 1
+        ob = array.get(order_blocks, i)
+        if not ob.is_mitigated
+            if ob.direction == "bullish" and low <= ob.bottom
+                ob.is_mitigated := true
+                array.set(order_blocks, i, ob)
+            else if ob.direction == "bearish" and high >= ob.top
+                ob.is_mitigated := true
+                array.set(order_blocks, i, ob)
+    
+    // Limit array size
+    while array.size(order_blocks) > max_order_blocks
+        array.shift(order_blocks)
+
+// Fair Value Gap detection
+detect_fair_value_gaps() =>
+    // Bullish FVG: low[0] > high[2]
+    if low > high[2]
+        gap_size = (low - high[2]) / high[2] * 100
+        if not fvg_filter_size or gap_size >= fvg_min_size
+            new_fvg = FairValueGap.new(bar_index - 2, bar_index, low, high[2],
+                                      "bullish", false, gap_size)
+            array.push(fair_value_gaps, new_fvg)
+    
+    // Bearish FVG: high[0] < low[2]
+    if high < low[2]
+        gap_size = (low[2] - high) / low[2] * 100
+        if not fvg_filter_size or gap_size >= fvg_min_size
+            new_fvg = FairValueGap.new(bar_index - 2, bar_index, low[2], high,
+                                      "bearish", false, gap_size)
+            array.push(fair_value_gaps, new_fvg)
+    
+    // Check for FVG fills
+    for i = 0 to array.size(fair_value_gaps) - 1
+        fvg = array.get(fair_value_gaps, i)
+        if not fvg.is_filled
+            if fvg.direction == "bullish" and low <= fvg.bottom
+                fvg.is_filled := true
+                array.set(fair_value_gaps, i, fvg)
+            else if fvg.direction == "bearish" and high >= fvg.top
+                fvg.is_filled := true
+                array.set(fair_value_gaps, i, fvg)
+    
+    // Limit array size
+    while array.size(fair_value_gaps) > max_fvgs
+        array.shift(fair_value_gaps)
+
+// Liquidity detection
+detect_liquidity() =>
+    // Equal highs (buyside liquidity)
+    recent_high = ta.highest(high, liquidity_lookback)
+    if high == recent_high
+        threshold = recent_high * (liquidity_threshold / 100)
+        
+        // Check for existing pool
+        existing_pool_index = -1
+        for i = 0 to array.size(liquidity_pools) - 1
+            pool = array.get(liquidity_pools, i)
+            if pool.side == "buyside" and math.abs(pool.price - recent_high) <= threshold
+                existing_pool_index := i
+                break
+        
+        if existing_pool_index >= 0
+            pool = array.get(liquidity_pools, existing_pool_index)
+            pool.touch_count += 1
+            pool.bar_index := bar_index
+            array.set(liquidity_pools, existing_pool_index, pool)
+        else
+            new_pool = LiquidityPool.new(recent_high, bar_index, "buyside", 1, false)
+            array.push(liquidity_pools, new_pool)
+    
+    // Equal lows (sellside liquidity)
+    recent_low = ta.lowest(low, liquidity_lookback)
+    if low == recent_low
+        threshold = recent_low * (liquidity_threshold / 100)
+        
+        // Check for existing pool
+        existing_pool_index = -1
+        for i = 0 to array.size(liquidity_pools) - 1
+            pool = array.get(liquidity_pools, i)
+            if pool.side == "sellside" and math.abs(pool.price - recent_low) <= threshold
+                existing_pool_index := i
+                break
+        
+        if existing_pool_index >= 0
+            pool = array.get(liquidity_pools, existing_pool_index)
+            pool.touch_count += 1
+            pool.bar_index := bar_index
+            array.set(liquidity_pools, existing_pool_index, pool)
+        else
+            new_pool = LiquidityPool.new(recent_low, bar_index, "sellside", 1, false)
+            array.push(liquidity_pools, new_pool)
+    
+    // Check for liquidity sweeps
+    for i = 0 to array.size(liquidity_pools) - 1
+        pool = array.get(liquidity_pools, i)
+        if not pool.is_swept
+            if pool.side == "buyside" and high > pool.price
+                pool.is_swept := true
+                array.set(liquidity_pools, i, pool)
+            else if pool.side == "sellside" and low < pool.price
+                pool.is_swept := true
+                array.set(liquidity_pools, i, pool)
+
+// Higher timeframe structure
+[htf_high, htf_low] = request.security(syminfo.tickerid, higher_tf, 
+                                      [get_swing_high(structure_length), get_swing_low(structure_length)],
+                                      lookahead=barmerge.lookahead_off)
+
+// Drawing functions
+draw_all_elements() =>
+    // Clear old drawings
+    for i = 0 to array.size(structure_boxes) - 1
+        box.delete(array.get(structure_boxes, i))
+    array.clear(structure_boxes)
+    
+    for i = 0 to array.size(structure_lines) - 1
+        line.delete(array.get(structure_lines, i))
+    array.clear(structure_lines)
+    
+    for i = 0 to array.size(structure_labels) - 1
+        label.delete(array.get(structure_labels, i))
+    array.clear(structure_labels)
+    
+    // Draw Order Blocks
+    for i = 0 to array.size(order_blocks) - 1
+        ob = array.get(order_blocks, i)
+        if not ob.is_mitigated and bar_index - ob.right_bar <= 50
+            box_color = ob.direction == "bullish" ? 
+                       color.new(color.blue, 80) : color.new(color.red, 80)
+            
+            ob_box = box.new(ob.left_bar, ob.top, ob.right_bar + 20, ob.bottom,
+                            bgcolor=box_color, border_color=color.gray)
+            array.push(structure_boxes, ob_box)
+    
+    // Draw Fair Value Gaps
+    for i = 0 to array.size(fair_value_gaps) - 1
+        fvg = array.get(fair_value_gaps, i)
+        if not fvg.is_filled and bar_index - fvg.right_bar <= 50
+            box_color = fvg.direction == "bullish" ?
+                       color.new(color.green, 85) : color.new(color.orange, 85)
+            
+            fvg_box = box.new(fvg.left_bar, fvg.top, fvg.right_bar + 30, fvg.bottom,
+                             bgcolor=box_color, border_color=color.gray)
+            array.push(structure_boxes, fvg_box)
+    
+    // Draw Liquidity Pools
+    for i = 0 to array.size(liquidity_pools) - 1
+        pool = array.get(liquidity_pools, i)
+        if not pool.is_swept and pool.touch_count >= 2 and bar_index - pool.bar_index <= 100
+            line_color = pool.side == "buyside" ? color.green : color.red
+            
+            pool_line = line.new(pool.bar_index, pool.price, bar_index + 20, pool.price,
+                               color=line_color, width=2, style=line.style_dashed)
+            array.push(structure_lines, pool_line)
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    // Internal structure
+    internal_high = get_swing_high(1)
+    internal_low = get_swing_low(1)
+    
+    if not na(internal_high) and show_internal
+        swing_point = SwingPoint.new(bar_index - 1, internal_high, true, timeframe.period)
+        analyze_market_structure(internal_structures, swing_point)
+    
+    if not na(internal_low) and show_internal
+        swing_point = SwingPoint.new(bar_index - 1, internal_low, false, timeframe.period)
+        analyze_market_structure(internal_structures, swing_point)
+    
+    // Swing structure
+    swing_high = get_swing_high(structure_length)
+    swing_low = get_swing_low(structure_length)
+    
+    if not na(swing_high) and show_swing
+        swing_point = SwingPoint.new(bar_index - structure_length, swing_high, true, timeframe.period)
+        analyze_market_structure(swing_structures, swing_point)
+    
+    if not na(swing_low) and show_swing
+        swing_point = SwingPoint.new(bar_index - structure_length, swing_low, false, timeframe.period)
+        analyze_market_structure(swing_structures, swing_point)
+    
+    // Higher timeframe structure
+    if show_htf_structure
+        if not na(htf_high)
+            htf_point = SwingPoint.new(bar_index, htf_high, true, higher_tf)
+            analyze_market_structure(htf_structures, htf_point)
+        
+        if not na(htf_low)
+            htf_point = SwingPoint.new(bar_index, htf_low, false, higher_tf)
+            analyze_market_structure(htf_structures, htf_point)
+    
+    // Detect all concepts
+    detect_order_blocks()
+    detect_fair_value_gaps()
+    detect_liquidity()
+    
+    // Draw everything
+    draw_all_elements()
+
+// === ALERTS ===
+// Structure breaks
+latest_structure = array.size(swing_structures) > 0 ? array.get(swing_structures, array.size(swing_structures) - 1) : na
+alertcondition(not na(latest_structure) and latest_structure.is_broken and latest_structure.break_type == "BOS", 
+               "BOS Alert", "Break of Structure detected")
+alertcondition(not na(latest_structure) and latest_structure.is_broken and latest_structure.break_type == "CHoCH",
+               "CHoCH Alert", "Change of Character detected")
+
+// === TABLE DISPLAY ===
+if barstate.islast
+    var table smc_table = table.new(position.top_right, 3, 6, bgcolor=color.white, border_width=1)
+    
+    table.cell(smc_table, 0, 0, "SMC Element", text_color=color.black, text_size=size.small)
+    table.cell(smc_table, 1, 0, "Active", text_color=color.black, text_size=size.small)
+    table.cell(smc_table, 2, 0, "Total", text_color=color.black, text_size=size.small)
+    
+    // Count active elements
+    active_obs = 0
+    for i = 0 to array.size(order_blocks) - 1
+        ob = array.get(order_blocks, i)
+        if not ob.is_mitigated
+            active_obs += 1
+    
+    active_fvgs = 0
+    for i = 0 to array.size(fair_value_gaps) - 1
+        fvg = array.get(fair_value_gaps, i)
+        if not fvg.is_filled
+            active_fvgs += 1
+    
+    active_liq = 0
+    for i = 0 to array.size(liquidity_pools) - 1
+        pool = array.get(liquidity_pools, i)
+        if not pool.is_swept and pool.touch_count >= 2
+            active_liq += 1
+    
+    table.cell(smc_table, 0, 1, "Order Blocks", text_color=color.blue, text_size=size.small)
+    table.cell(smc_table, 1, 1, str.tostring(active_obs), text_color=color.black, text_size=size.small)
+    table.cell(smc_table, 2, 1, str.tostring(array.size(order_blocks)), text_color=color.gray, text_size=size.small)
+    
+    table.cell(smc_table, 0, 2, "FVGs", text_color=color.green, text_size=size.small)
+    table.cell(smc_table, 1, 2, str.tostring(active_fvgs), text_color=color.black, text_size=size.small)
+    table.cell(smc_table, 2, 2, str.tostring(array.size(fair_value_gaps)), text_color=color.gray, text_size=size.small)
+    
+    table.cell(smc_table, 0, 3, "Liquidity", text_color=color.orange, text_size=size.small)
+    table.cell(smc_table, 1, 3, str.tostring(active_liq), text_color=color.black, text_size=size.small)
+    table.cell(smc_table, 2, 3, str.tostring(array.size(liquidity_pools)), text_color=color.gray, text_size=size.small)

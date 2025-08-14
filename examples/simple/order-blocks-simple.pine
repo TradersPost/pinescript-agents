@@ -1,0 +1,62 @@
+//@version=6
+indicator("Order Blocks - Simple", "OB Simple", overlay=true, max_boxes_count=50)
+
+// === INPUTS ===
+ob_length = input.int(5, "Pivot Length", minval=2, maxval=20, group="Settings")
+show_bullish = input.bool(true, "Show Bullish OB", group="Display") 
+show_bearish = input.bool(true, "Show Bearish OB", group="Display")
+bull_color = input.color(color.new(color.blue, 70), "Bullish OB", group="Colors")
+bear_color = input.color(color.new(color.orange, 70), "Bearish OB", group="Colors")
+
+// === VARIABLES ===
+var box[] bull_obs = array.new<box>()
+var box[] bear_obs = array.new<box>()
+
+// === FUNCTIONS ===
+// Get pivot highs and lows
+pivot_high = ta.pivothigh(high, ob_length, ob_length)
+pivot_low = ta.pivotlow(low, ob_length, ob_length)
+
+// Check if current candle broke structure
+broke_high = high > high[ob_length]
+broke_low = low < low[ob_length]
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    // Bullish Order Block (after breaking below pivot low)
+    if show_bullish and not na(pivot_low) and broke_low
+        ob_top = high[ob_length]
+        ob_bottom = low[ob_length] 
+        ob_left = bar_index - ob_length
+        ob_right = bar_index + 10
+        
+        new_box = box.new(ob_left, ob_top, ob_right, ob_bottom,
+                         bgcolor=bull_color, border_color=color.blue)
+        array.push(bull_obs, new_box)
+        
+        // Keep only last 10 boxes
+        if array.size(bull_obs) > 10
+            old_box = array.shift(bull_obs)
+            box.delete(old_box)
+    
+    // Bearish Order Block (after breaking above pivot high)
+    if show_bearish and not na(pivot_high) and broke_high
+        ob_top = high[ob_length]
+        ob_bottom = low[ob_length]
+        ob_left = bar_index - ob_length  
+        ob_right = bar_index + 10
+        
+        new_box = box.new(ob_left, ob_top, ob_right, ob_bottom,
+                         bgcolor=bear_color, border_color=color.orange)
+        array.push(bear_obs, new_box)
+        
+        // Keep only last 10 boxes
+        if array.size(bear_obs) > 10
+            old_box = array.shift(bear_obs)
+            box.delete(old_box)
+
+// === PLOTTING ===
+plotshape(pivot_high, style=shape.triangledown, location=location.abovebar, 
+          color=color.red, size=size.small, title="Pivot High")
+plotshape(pivot_low, style=shape.triangleup, location=location.belowbar,
+          color=color.green, size=size.small, title="Pivot Low")

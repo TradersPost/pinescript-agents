@@ -1,0 +1,80 @@
+//@version=6
+indicator("VWAP - Basic", "VWAP", overlay=true)
+
+// === INPUTS ===
+anchor_period = input.string("Session", "Anchor Period", 
+                             options=["Session", "Week", "Month"], group="Settings")
+show_bands = input.bool(true, "Show Standard Deviation Bands", group="Display")
+std_mult1 = input.float(1.0, "1st StdDev Multiplier", minval=0.1, maxval=5.0, group="Bands")
+std_mult2 = input.float(2.0, "2nd StdDev Multiplier", minval=0.1, maxval=5.0, group="Bands")
+vwap_color = input.color(color.blue, "VWAP Color", group="Colors")
+band_color = input.color(color.gray, "Band Color", group="Colors")
+
+// === VARIABLES ===
+var float sum_pv = 0.0
+var float sum_v = 0.0
+var float sum_pv2 = 0.0
+var int start_time = 0
+
+// === FUNCTIONS ===
+// Check if new anchor period started
+is_new_period() =>
+    switch anchor_period
+        "Session" => timeframe.change("1D")
+        "Week" => timeframe.change("1W") 
+        "Month" => timeframe.change("1M")
+        => false
+
+// Typical price
+typ_price = hlc3
+
+// === MAIN LOGIC ===
+// Reset on new period
+if is_new_period()
+    sum_pv := 0.0
+    sum_v := 0.0
+    sum_pv2 := 0.0
+    start_time := time
+
+// Calculate VWAP components
+sum_pv += typ_price * volume
+sum_v += volume
+sum_pv2 += typ_price * typ_price * volume
+
+// Calculate VWAP and standard deviation
+vwap_value = sum_pv / sum_v
+variance = (sum_pv2 / sum_v) - (vwap_value * vwap_value)
+std_dev = math.sqrt(variance)
+
+// Calculate bands
+upper_band1 = vwap_value + (std_dev * std_mult1)
+lower_band1 = vwap_value - (std_dev * std_mult1)
+upper_band2 = vwap_value + (std_dev * std_mult2)
+lower_band2 = vwap_value - (std_dev * std_mult2)
+
+// === PLOTTING ===
+plot(vwap_value, title="VWAP", color=vwap_color, linewidth=2)
+
+// Standard deviation bands
+plot(show_bands ? upper_band1 : na, title="Upper Band 1", 
+     color=color.new(band_color, 50), linewidth=1)
+plot(show_bands ? lower_band1 : na, title="Lower Band 1", 
+     color=color.new(band_color, 50), linewidth=1)
+plot(show_bands ? upper_band2 : na, title="Upper Band 2", 
+     color=color.new(band_color, 70), linewidth=1)
+plot(show_bands ? lower_band2 : na, title="Lower Band 2", 
+     color=color.new(band_color, 70), linewidth=1)
+
+// Fill between bands
+fill(plot(show_bands ? upper_band1 : na, display=display.none),
+     plot(show_bands ? lower_band1 : na, display=display.none),
+     color=color.new(band_color, 90), title="VWAP Channel")
+
+// === TABLE ===
+if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 4, bgcolor=color.white, border_width=1)
+    table.cell(info_table, 0, 0, "VWAP", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 0, str.tostring(vwap_value, "#.####"), text_color=color.blue, text_size=size.small)
+    table.cell(info_table, 0, 1, "Distance", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 1, str.tostring(((close - vwap_value) / vwap_value) * 100, "#.##") + "%", 
+               text_color=close > vwap_value ? color.green : color.red, text_size=size.small)

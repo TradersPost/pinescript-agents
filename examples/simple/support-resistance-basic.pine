@@ -1,0 +1,58 @@
+//@version=6
+indicator("Support & Resistance - Basic", "S&R Basic", overlay=true, max_lines_count=20)
+
+// === INPUTS ===
+pivot_length = input.int(10, "Pivot Length", minval=5, maxval=50, group="Settings")
+line_extend = input.int(20, "Line Extension", minval=10, maxval=100, group="Settings")
+support_color = input.color(color.green, "Support Color", group="Colors")
+resistance_color = input.color(color.red, "Resistance Color", group="Colors")
+line_width = input.int(2, "Line Width", minval=1, maxval=4, group="Display")
+
+// === VARIABLES ===
+var line[] support_lines = array.new<line>()
+var line[] resistance_lines = array.new<line>()
+
+// === FUNCTIONS ===
+// Get pivot points
+pivot_high = ta.pivothigh(high, pivot_length, pivot_length)
+pivot_low = ta.pivotlow(low, pivot_length, pivot_length)
+
+// Clean up old lines
+cleanup_lines(lines_array, max_lines) =>
+    while array.size(lines_array) > max_lines
+        old_line = array.shift(lines_array)
+        line.delete(old_line)
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    // Support Level (from pivot low)
+    if not na(pivot_low)
+        support_level = pivot_low
+        start_bar = bar_index - pivot_length
+        end_bar = bar_index + line_extend
+        
+        support_line = line.new(start_bar, support_level, end_bar, support_level,
+                               color=support_color, width=line_width, style=line.style_solid)
+        array.push(support_lines, support_line)
+        cleanup_lines(support_lines, 10)
+    
+    // Resistance Level (from pivot high)  
+    if not na(pivot_high)
+        resistance_level = pivot_high
+        start_bar = bar_index - pivot_length
+        end_bar = bar_index + line_extend
+        
+        resistance_line = line.new(start_bar, resistance_level, end_bar, resistance_level,
+                                  color=resistance_color, width=line_width, style=line.style_solid)
+        array.push(resistance_lines, resistance_line)
+        cleanup_lines(resistance_lines, 10)
+
+// === PLOTTING ===
+plotshape(pivot_high, style=shape.labeldown, location=location.abovebar,
+          color=color.new(color.red, 0), textcolor=color.white, text="R", size=size.small)
+plotshape(pivot_low, style=shape.labelup, location=location.belowbar,
+          color=color.new(color.green, 0), textcolor=color.white, text="S", size=size.small)
+
+// === ALERTS ===
+alertcondition(not na(pivot_high), "Resistance Level", "New resistance level detected")
+alertcondition(not na(pivot_low), "Support Level", "New support level detected")

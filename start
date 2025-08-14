@@ -1,0 +1,237 @@
+#!/bin/bash
+# Pine Script Development Assistant - Interactive Start Command
+
+# Colors for better visibility
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+clear
+
+echo -e "${BLUE}${BOLD}"
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║     🚀 PINE SCRIPT DEVELOPMENT ASSISTANT                    ║"
+echo "║     Professional TradingView Script Creator                 ║"
+echo "╚════════════════════════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# Check if first time user
+FIRST_TIME=false
+if [ ! -f ".claude/.onboarding_complete" ]; then
+    FIRST_TIME=true
+    mkdir -p .claude
+    touch .claude/.onboarding_complete
+    
+    echo -e "${GREEN}${BOLD}Welcome! I see this is your first time using the system.${NC}"
+    echo ""
+    echo -e "${CYAN}This AI-powered assistant helps you create:${NC}"
+    echo "  • Trading indicators (RSI, MACD, custom)"
+    echo "  • Automated strategies with backtesting"
+    echo "  • Complex visualizations and alerts"
+    echo "  • Custom Pine Script solutions"
+    echo ""
+else
+    echo -e "${GREEN}${BOLD}Welcome back!${NC}"
+    
+    # Check for existing projects
+    if [ -d "projects" ]; then
+        count=$(ls -1 projects/*.pine 2>/dev/null | grep -v blank.pine | wc -l)
+        if [ $count -gt 0 ]; then
+            echo ""
+            echo -e "${YELLOW}Your existing projects:${NC}"
+            ls -1 projects/*.pine 2>/dev/null | grep -v blank.pine | head -5 | while read file; do
+                basename "$file" | sed 's/^/  📄 /'
+            done
+            echo ""
+        fi
+    fi
+fi
+
+# Ensure blank.pine exists
+if [ ! -f "projects/blank.pine" ]; then
+    mkdir -p projects
+    cat > projects/blank.pine << 'EOF'
+//@version=6
+// This is a blank Pine Script template
+// It will be renamed and populated based on your requirements
+// 
+// Project: [To be defined]
+// Type: [Indicator/Strategy]
+// Created: [Date]
+// 
+// ============================================================================
+
+indicator("Blank Template", overlay=true)
+
+// Your Pine Script code will be generated here
+EOF
+fi
+
+echo -e "${BOLD}Choose how to start:${NC}"
+echo ""
+echo -e "${CYAN}1)${NC} 📝 Describe what you want to build"
+echo -e "${CYAN}2)${NC} 🎥 Analyze a YouTube video"
+echo -e "${CYAN}3)${NC} 🎯 Use a quick template"
+echo -e "${CYAN}4)${NC} 📚 View examples"
+echo -e "${CYAN}5)${NC} ❓ Learn what's possible"
+echo ""
+echo -e -n "${BOLD}Enter your choice (1-5): ${NC}"
+read -r choice
+
+echo ""
+
+case $choice in
+    1)
+        echo -e "${BLUE}${BOLD}━━━ CUSTOM BUILD ━━━${NC}"
+        echo ""
+        echo "Tell me what you want to create. Examples:"
+        echo '  • "RSI divergence indicator with alerts"'
+        echo '  • "Moving average crossover strategy"'
+        echo '  • "Volume profile with point of control"'
+        echo '  • "Bollinger Band squeeze detector"'
+        echo ""
+        echo -e "${BOLD}Describe your Pine Script idea:${NC}"
+        echo ""
+        echo -e "${YELLOW}[Now tell Claude what you want to build]${NC}"
+        echo ""
+        echo "Example: Create an RSI divergence indicator that detects both regular and hidden divergences"
+        ;;
+        
+    2)
+        echo -e "${BLUE}${BOLD}━━━ VIDEO ANALYSIS ━━━${NC}"
+        echo ""
+        echo "I can analyze any YouTube video about a trading strategy or indicator"
+        echo "and automatically create the Pine Script for you."
+        echo ""
+        echo -e -n "${BOLD}Enter YouTube URL: ${NC}"
+        read -r video_url
+        echo ""
+        
+        if [[ -n "$video_url" ]]; then
+            echo -e "${GREEN}Analyzing video...${NC}"
+            if [ -f "tools/video-analyzer.py" ]; then
+                python3 tools/video-analyzer.py "$video_url"
+            else
+                echo -e "${YELLOW}To analyze: Tell Claude 'Analyze this video: $video_url'${NC}"
+            fi
+        else
+            echo -e "${YELLOW}No URL provided. You can tell Claude: 'Analyze [YouTube URL]'${NC}"
+        fi
+        ;;
+        
+    3)
+        echo -e "${BLUE}${BOLD}━━━ QUICK TEMPLATES ━━━${NC}"
+        echo ""
+        echo "Popular templates to start from:"
+        echo ""
+        echo -e "${CYAN}Indicators:${NC}"
+        echo "  a) RSI with divergence detection"
+        echo "  b) MACD with histogram"
+        echo "  c) Bollinger Bands with squeeze"
+        echo "  d) Volume Profile"
+        echo "  e) Multi-timeframe moving averages"
+        echo ""
+        echo -e "${CYAN}Strategies:${NC}"
+        echo "  f) MA crossover with filters"
+        echo "  g) RSI oversold/overbought"
+        echo "  h) Breakout system"
+        echo "  i) Mean reversion"
+        echo "  j) Trend following"
+        echo ""
+        echo -e -n "${BOLD}Choose template (a-j) or 'c' for custom: ${NC}"
+        read -r template
+        
+        case $template in
+            a) echo -e "${YELLOW}Tell Claude: Create an RSI indicator with divergence detection${NC}" ;;
+            b) echo -e "${YELLOW}Tell Claude: Create a MACD indicator with histogram${NC}" ;;
+            c) echo -e "${YELLOW}Tell Claude: Create Bollinger Bands with squeeze detection${NC}" ;;
+            d) echo -e "${YELLOW}Tell Claude: Create a Volume Profile indicator${NC}" ;;
+            e) echo -e "${YELLOW}Tell Claude: Create multi-timeframe moving averages${NC}" ;;
+            f) echo -e "${YELLOW}Tell Claude: Create a moving average crossover strategy${NC}" ;;
+            g) echo -e "${YELLOW}Tell Claude: Create an RSI oversold/overbought strategy${NC}" ;;
+            h) echo -e "${YELLOW}Tell Claude: Create a breakout strategy${NC}" ;;
+            i) echo -e "${YELLOW}Tell Claude: Create a mean reversion strategy${NC}" ;;
+            j) echo -e "${YELLOW}Tell Claude: Create a trend following strategy${NC}" ;;
+            *) echo -e "${YELLOW}Tell Claude what custom template you want${NC}" ;;
+        esac
+        ;;
+        
+    4)
+        echo -e "${BLUE}${BOLD}━━━ EXAMPLES ━━━${NC}"
+        echo ""
+        echo "Example scripts available:"
+        echo ""
+        
+        if [ -d "examples" ]; then
+            echo -e "${CYAN}Simple:${NC}"
+            ls -1 examples/simple/*.pine 2>/dev/null | head -3 | while read file; do
+                basename "$file" .pine | sed 's/^/  • /'
+            done
+            
+            echo ""
+            echo -e "${CYAN}Intermediate:${NC}"
+            ls -1 examples/intermediate/*.pine 2>/dev/null | head -3 | while read file; do
+                basename "$file" .pine | sed 's/^/  • /'
+            done
+            
+            echo ""
+            echo -e "${CYAN}Advanced:${NC}"
+            ls -1 examples/advanced/*.pine 2>/dev/null | head -3 | while read file; do
+                basename "$file" .pine | sed 's/^/  • /'
+            done
+        fi
+        
+        echo ""
+        echo -e "${YELLOW}Tell Claude: 'Show me the [example name] example'${NC}"
+        ;;
+        
+    5)
+        echo -e "${BLUE}${BOLD}━━━ CAPABILITIES ━━━${NC}"
+        echo ""
+        echo -e "${GREEN}✅ What I CAN do:${NC}"
+        echo "  • Create any standard indicator (RSI, MACD, Bollinger, etc.)"
+        echo "  • Build trading strategies with entries/exits"
+        echo "  • Add alerts and webhooks for automation"
+        echo "  • Create custom visualizations and tables"
+        echo "  • Implement complex logic and calculations"
+        echo "  • Multi-timeframe analysis"
+        echo "  • Backtesting with performance metrics"
+        echo ""
+        echo -e "${YELLOW}⚠️ What I'll WORK AROUND:${NC}"
+        echo "  • Machine Learning → Simplified decision trees"
+        echo "  • Options flow → Volume-based approximations"
+        echo "  • Market Profile → Custom implementation"
+        echo "  • Pairs trading → Signal generation only"
+        echo "  • Order flow → Volume delta analysis"
+        echo ""
+        echo -e "${RED}❌ Limitations:${NC}"
+        echo "  • Can't access external APIs directly"
+        echo "  • Can't execute real trades (signals only)"
+        echo "  • Limited to TradingView's data"
+        echo ""
+        echo -e "${CYAN}But I'll always find a creative solution!${NC}"
+        ;;
+        
+    *)
+        echo -e "${RED}Invalid choice. Just tell Claude what you want to build!${NC}"
+        ;;
+esac
+
+echo ""
+echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
+if [ "$FIRST_TIME" = true ]; then
+    echo -e "${GREEN}${BOLD}✅ System initialized and ready!${NC}"
+    echo ""
+fi
+
+echo -e "${CYAN}${BOLD}Next step:${NC} Type your request in the Claude chat above"
+echo -e "${CYAN}${BOLD}Need help?${NC} Just type 'help' anytime"
+echo ""
+echo -e "${YELLOW}${BOLD}🤖 Claude is ready to create your Pine Script!${NC}"
+echo ""

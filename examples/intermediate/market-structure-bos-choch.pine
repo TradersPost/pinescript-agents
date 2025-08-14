@@ -1,0 +1,170 @@
+//@version=6
+indicator("Market Structure - BOS & CHoCH", "MS", overlay=true, max_lines_count=100, max_labels_count=100)
+
+// === INPUTS ===
+swing_length = input.int(5, "Swing Length", minval=3, maxval=50, group="Structure")
+show_internal = input.bool(true, "Show Internal Structure", group="Display")
+show_swing = input.bool(true, "Show Swing Structure", group="Display")
+show_bos = input.bool(true, "Show BOS", group="Signals")
+show_choch = input.bool(true, "Show CHoCH", group="Signals")
+
+// Colors
+bos_bull_color = input.color(color.new(color.lime, 0), "Bullish BOS", group="Colors")
+bos_bear_color = input.color(color.new(color.red, 0), "Bearish BOS", group="Colors")
+choch_bull_color = input.color(color.new(color.aqua, 0), "Bullish CHoCH", group="Colors")
+choch_bear_color = input.color(color.new(color.orange, 0), "Bearish CHoCH", group="Colors")
+
+// === TYPES ===
+type SwingPoint
+    int bar_index
+    float price
+    bool is_high
+    bool is_internal
+
+type MarketStructure
+    string trend  // "bullish", "bearish", "sideways"
+    SwingPoint last_high
+    SwingPoint last_low
+    SwingPoint prev_high
+    SwingPoint prev_low
+
+// === VARIABLES ===
+var MarketStructure internal_structure = MarketStructure.new("sideways")
+var MarketStructure swing_structure = MarketStructure.new("sideways")
+var line[] structure_lines = array.new<line>()
+var label[] structure_labels = array.new<label>()
+
+// === FUNCTIONS ===
+// Detect swing points
+get_swing_high() => ta.pivothigh(high, swing_length, swing_length)
+get_swing_low() => ta.pivotlow(low, swing_length, swing_length)
+get_internal_high() => ta.pivothigh(high, 1, 1)
+get_internal_low() => ta.pivotlow(low, 1, 1)
+
+// Update market structure
+update_structure(structure, new_point) =>
+    if new_point.is_high
+        structure.prev_high := structure.last_high
+        structure.last_high := new_point
+        
+        // Determine trend change
+        if not na(structure.prev_high)
+            if new_point.price > structure.prev_high.price
+                structure.trend := "bullish"
+            else if new_point.price < structure.prev_high.price
+                structure.trend := "bearish"
+    else
+        structure.prev_low := structure.last_low
+        structure.last_low := new_point
+        
+        // Determine trend change
+        if not na(structure.prev_low)
+            if new_point.price < structure.prev_low.price
+                structure.trend := "bearish"
+            else if new_point.price > structure.prev_low.price
+                structure.trend := "bullish"
+
+// Check for BOS (Break of Structure)
+is_bos(structure, current_price, is_high_break) =>
+    if is_high_break and not na(structure.last_high)
+        current_price > structure.last_high.price and structure.trend == "bullish"
+    else if not is_high_break and not na(structure.last_low)
+        current_price < structure.last_low.price and structure.trend == "bearish"
+    else
+        false
+
+// Check for CHoCH (Change of Character)
+is_choch(structure, current_price, is_high_break) =>
+    if is_high_break and not na(structure.last_high)
+        current_price > structure.last_high.price and structure.trend == "bearish"
+    else if not is_high_break and not na(structure.last_low)
+        current_price < structure.last_low.price and structure.trend == "bullish"
+    else
+        false
+
+// Draw structure line
+draw_structure_line(point1, point2, line_color, line_style) =>
+    if not na(point1) and not na(point2)
+        structure_line = line.new(point1.bar_index, point1.price, point2.bar_index, point2.price,
+                                 color=line_color, width=1, style=line_style)
+        array.push(structure_lines, structure_line)
+        
+        // Cleanup old lines
+        if array.size(structure_lines) > 50
+            old_line = array.shift(structure_lines)
+            line.delete(old_line)
+
+// Create signal label
+create_label(bar_idx, price, label_text, label_color, location) =>
+    signal_label = label.new(bar_idx, price, text=label_text, color=label_color,
+                            textcolor=color.white, size=size.small, style=label.style_label_down)
+    array.push(structure_labels, signal_label)
+    
+    // Cleanup old labels
+    if array.size(structure_labels) > 20
+        old_label = array.shift(structure_labels)
+        label.delete(old_label)
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    // Swing Structure
+    swing_high = get_swing_high()
+    swing_low = get_swing_low()
+    
+    if not na(swing_high)
+        new_high = SwingPoint.new(bar_index - swing_length, swing_high, true, false)
+        update_structure(swing_structure, new_high)
+        
+        if show_swing
+            draw_structure_line(swing_structure.prev_high, swing_structure.last_high,
+                              color.blue, line.style_solid)
+    
+    if not na(swing_low)
+        new_low = SwingPoint.new(bar_index - swing_length, swing_low, false, false)
+        update_structure(swing_structure, new_low)
+        
+        if show_swing
+            draw_structure_line(swing_structure.prev_low, swing_structure.last_low,
+                              color.blue, line.style_solid)
+    
+    // Internal Structure
+    if show_internal
+        internal_high = get_internal_high()
+        internal_low = get_internal_low()
+        
+        if not na(internal_high)
+            new_high = SwingPoint.new(bar_index - 1, internal_high, true, true)
+            update_structure(internal_structure, new_high)
+            draw_structure_line(internal_structure.prev_high, internal_structure.last_high,
+                              color.gray, line.style_dashed)
+        
+        if not na(internal_low)
+            new_low = SwingPoint.new(bar_index - 1, internal_low, false, true)
+            update_structure(internal_structure, new_low)
+            draw_structure_line(internal_structure.prev_low, internal_structure.last_low,
+                              color.gray, line.style_dashed)
+
+// === SIGNAL DETECTION ===
+// Check for breaks on current bar
+high_break = high > (swing_structure.last_high.price)
+low_break = low < (swing_structure.last_low.price)
+
+// BOS Detection
+if show_bos and high_break and is_bos(swing_structure, high, true)
+    create_label(bar_index, high, "BOS", bos_bull_color, location.abovebar)
+
+if show_bos and low_break and is_bos(swing_structure, low, false)
+    create_label(bar_index, low, "BOS", bos_bear_color, location.belowbar)
+
+// CHoCH Detection  
+if show_choch and high_break and is_choch(swing_structure, high, true)
+    create_label(bar_index, high, "CHoCH", choch_bull_color, location.abovebar)
+
+if show_choch and low_break and is_choch(swing_structure, low, false)
+    create_label(bar_index, low, "CHoCH", choch_bear_color, location.belowbar)
+
+// === ALERTS ===
+alertcondition(high_break and is_bos(swing_structure, high, true), "Bullish BOS", "Bullish Break of Structure")
+alertcondition(low_break and is_bos(swing_structure, low, false), "Bearish BOS", "Bearish Break of Structure")
+alertcondition(high_break and is_choch(swing_structure, high, true), "Bullish CHoCH", "Bullish Change of Character")
+alertcondition(low_break and is_choch(swing_structure, low, false), "Bearish CHoCH", "Bearish Change of Character")

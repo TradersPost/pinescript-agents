@@ -1,0 +1,231 @@
+//@version=6
+indicator("Liquidity Zones - ICT", "LZ ICT", overlay=true, max_boxes_count=50, max_lines_count=100)
+
+// === INPUTS ===
+lookback_bars = input.int(20, "Lookback Bars", minval=10, maxval=100, group="Detection")
+min_touches = input.int(2, "Minimum Touches", minval=2, maxval=5, group="Detection")
+zone_threshold = input.float(0.1, "Zone Threshold %", minval=0.01, maxval=1.0, group="Detection")
+show_buyside = input.bool(true, "Show Buyside Liquidity", group="Display")
+show_sellside = input.bool(true, "Show Sellside Liquidity", group="Display")
+extend_lines = input.int(20, "Extend Lines", minval=5, maxval=50, group="Display")
+
+// Colors
+buyside_color = input.color(color.new(color.green, 70), "Buyside Color", group="Colors")
+sellside_color = input.color(color.new(color.red, 70), "Sellside Color", group="Colors")
+buyside_line = input.color(color.green, "Buyside Line", group="Colors")
+sellside_line = input.color(color.red, "Sellside Line", group="Colors")
+
+// === TYPES ===
+type LiquidityLevel
+    float price
+    int touch_count
+    int first_touch_bar
+    int last_touch_bar
+    string side  // "buyside" or "sellside"
+    bool is_active
+
+type LiquidityZone
+    float high_price
+    float low_price
+    int touch_count
+    int first_bar
+    int last_bar
+    string side
+    bool is_active
+
+// === VARIABLES ===
+var array<LiquidityLevel> buyside_levels = array.new<LiquidityLevel>()
+var array<LiquidityLevel> sellside_levels = array.new<LiquidityLevel>()
+var array<LiquidityZone> liquidity_zones = array.new<LiquidityZone>()
+var box[] zone_boxes = array.new<box>()
+var line[] zone_lines = array.new<line>()
+
+// === FUNCTIONS ===
+// Check if price is within threshold of level
+is_near_level(price, level_price, threshold_pct) =>
+    threshold = level_price * (threshold_pct / 100.0)
+    math.abs(price - level_price) <= threshold
+
+// Find existing level near price
+find_level_near_price(levels_array, price, threshold_pct) =>
+    level_index = -1
+    for i = 0 to array.size(levels_array) - 1
+        level = array.get(levels_array, i)
+        if is_near_level(price, level.price, threshold_pct)
+            level_index := i
+            break
+    level_index
+
+// Add or update liquidity level
+update_liquidity_level(levels_array, price, side) =>
+    existing_index = find_level_near_price(levels_array, price, zone_threshold)
+    
+    if existing_index >= 0
+        // Update existing level
+        existing_level = array.get(levels_array, existing_index)
+        existing_level.touch_count += 1
+        existing_level.last_touch_bar := bar_index
+        existing_level.is_active := true
+        array.set(levels_array, existing_index, existing_level)
+    else
+        // Create new level
+        new_level = LiquidityLevel.new(
+            price, 1, bar_index, bar_index, side, true)
+        array.push(levels_array, new_level)
+
+// Clean old levels
+clean_old_levels(levels_array) =>
+    i = 0
+    while i < array.size(levels_array)
+        level = array.get(levels_array, i)
+        if bar_index - level.last_touch_bar > lookback_bars
+            array.remove(levels_array, i)
+        else
+            i += 1
+
+// Create liquidity zones from levels
+create_zones_from_levels() =>
+    array.clear(liquidity_zones)
+    
+    // Process buyside levels
+    if show_buyside
+        for i = 0 to array.size(buyside_levels) - 1
+            level = array.get(buyside_levels, i)
+            if level.touch_count >= min_touches and level.is_active
+                zone_height = level.price * (zone_threshold / 100.0)
+                new_zone = LiquidityZone.new(
+                    level.price + zone_height/2, level.price - zone_height/2,
+                    level.touch_count, level.first_touch_bar, level.last_touch_bar,
+                    "buyside", true)
+                array.push(liquidity_zones, new_zone)
+    
+    // Process sellside levels
+    if show_sellside
+        for i = 0 to array.size(sellside_levels) - 1
+            level = array.get(sellside_levels, i)
+            if level.touch_count >= min_touches and level.is_active
+                zone_height = level.price * (zone_threshold / 100.0)
+                new_zone = LiquidityZone.new(
+                    level.price + zone_height/2, level.price - zone_height/2,
+                    level.touch_count, level.first_touch_bar, level.last_touch_bar,
+                    "sellside", true)
+                array.push(liquidity_zones, new_zone)
+
+// Draw zones
+draw_liquidity_zones() =>
+    // Clear old drawings
+    for i = 0 to array.size(zone_boxes) - 1
+        box.delete(array.get(zone_boxes, i))
+    array.clear(zone_boxes)
+    
+    for i = 0 to array.size(zone_lines) - 1
+        line.delete(array.get(zone_lines, i))
+    array.clear(zone_lines)
+    
+    // Draw zones
+    for i = 0 to array.size(liquidity_zones) - 1
+        zone = array.get(liquidity_zones, i)
+        if zone.is_active
+            zone_color = zone.side == "buyside" ? buyside_color : sellside_color
+            line_color = zone.side == "buyside" ? buyside_line : sellside_line
+            
+            // Draw zone box
+            zone_box = box.new(zone.last_bar, zone.high_price, 
+                              zone.last_bar + extend_lines, zone.low_price,
+                              bgcolor=zone_color, border_color=line_color, border_width=1)
+            array.push(zone_boxes, zone_box)
+            
+            // Draw center line
+            center_price = (zone.high_price + zone.low_price) / 2
+            center_line = line.new(zone.first_bar, center_price,
+                                  zone.last_bar + extend_lines, center_price,
+                                  color=line_color, width=2, style=line.style_solid)
+            array.push(zone_lines, center_line)
+
+// Check for liquidity sweeps
+check_liquidity_sweep() =>
+    swept_buyside = false
+    swept_sellside = false
+    
+    // Check buyside sweeps (high break)
+    for i = 0 to array.size(buyside_levels) - 1
+        level = array.get(buyside_levels, i)
+        if level.is_active and high > level.price
+            level.is_active := false
+            array.set(buyside_levels, i, level)
+            swept_buyside := true
+    
+    // Check sellside sweeps (low break)
+    for i = 0 to array.size(sellside_levels) - 1
+        level = array.get(sellside_levels, i)
+        if level.is_active and low < level.price
+            level.is_active := false
+            array.set(sellside_levels, i, level)
+            swept_sellside := true
+    
+    [swept_buyside, swept_sellside]
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    // Look for potential liquidity levels
+    // Buyside liquidity: Multiple highs at similar levels
+    highest_in_range = ta.highest(high, lookback_bars)
+    if high == highest_in_range
+        update_liquidity_level(buyside_levels, high, "buyside")
+    
+    // Sellside liquidity: Multiple lows at similar levels  
+    lowest_in_range = ta.lowest(low, lookback_bars)
+    if low == lowest_in_range
+        update_liquidity_level(sellside_levels, low, "sellside")
+    
+    // Clean old levels
+    clean_old_levels(buyside_levels)
+    clean_old_levels(sellside_levels)
+    
+    // Check for sweeps
+    [swept_buy, swept_sell] = check_liquidity_sweep()
+    
+    // Create and draw zones
+    create_zones_from_levels()
+    draw_liquidity_zones()
+
+// === PLOTTING ===
+// Plot sweep signals
+plotshape(check_liquidity_sweep()[0], style=shape.triangledown, location=location.abovebar,
+          color=color.orange, size=size.small, title="Buyside Sweep")
+plotshape(check_liquidity_sweep()[1], style=shape.triangleup, location=location.belowbar,
+          color=color.orange, size=size.small, title="Sellside Sweep")
+
+// === TABLE ===
+if barstate.islast
+    var table info_table = table.new(position.top_left, 3, 5, bgcolor=color.white, border_width=1)
+    
+    table.cell(info_table, 0, 0, "Type", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 0, "Count", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 2, 0, "Active", text_color=color.black, text_size=size.small)
+    
+    // Count active buyside levels
+    active_buyside = 0
+    for i = 0 to array.size(buyside_levels) - 1
+        level = array.get(buyside_levels, i)
+        if level.is_active and level.touch_count >= min_touches
+            active_buyside += 1
+    
+    table.cell(info_table, 0, 1, "Buyside", text_color=color.green, text_size=size.small)
+    table.cell(info_table, 1, 1, str.tostring(array.size(buyside_levels)), text_color=color.black, text_size=size.small)
+    table.cell(info_table, 2, 1, str.tostring(active_buyside), text_color=color.green, text_size=size.small)
+    
+    // Count active sellside levels
+    active_sellside = 0
+    for i = 0 to array.size(sellside_levels) - 1
+        level = array.get(sellside_levels, i)
+        if level.is_active and level.touch_count >= min_touches
+            active_sellside += 1
+    
+    table.cell(info_table, 0, 2, "Sellside", text_color=color.red, text_size=size.small)
+    table.cell(info_table, 1, 2, str.tostring(array.size(sellside_levels)), text_color=color.black, text_size=size.small)
+    table.cell(info_table, 2, 2, str.tostring(active_sellside), text_color=color.red, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(check_liquidity_sweep()[0], "Buyside Liquidity Swept", "Buyside liquidity has been swept")
+alertcondition(check_liquidity_sweep()[1], "Sellside Liquidity Swept", "Sellside liquidity has been swept")
