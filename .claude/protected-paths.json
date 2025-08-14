@@ -1,0 +1,27 @@
+{
+  "always_protected": [
+    ".git/",
+    ".claude/hooks/",
+    ".claude/agents/"
+  ],
+  "protected_when_locked": [
+    "docs/",
+    "templates/",
+    "tools/",
+    "examples/",
+    "README.md",
+    "CLAUDE.md",
+    "package.json",
+    "start",
+    "start.sh",
+    "analyze-video.sh",
+    ".gitignore"
+  ],
+  "always_writable": [
+    "projects/",
+    ".claude/.lock_state",
+    ".claude/.onboarding_complete",
+    ".claude/.state.json",
+    ".claude/.last_session"
+  ]
+}

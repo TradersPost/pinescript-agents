@@ -65,6 +65,52 @@ List the available example scripts from the examples/ directory.
 ### "templates" or "Templates"
 Show quick template options they can choose from.
 
+### "lock" or "Lock" or "LOCK"
+Enable file protection mode:
+- Only `/projects/` directory can be modified
+- System files become read-only
+- Prevents accidental corruption of agents/documentation
+
+### "unlock" or "Unlock" or "UNLOCK"
+Disable file protection (development mode):
+- All files can be modified
+- Use with caution
+- Default state for development
+
+### "status" or "Status" or "STATUS"
+Show current system status including lock state and project count.
+
+## File Protection System
+
+The project includes a protection system to prevent accidental modification of system files:
+
+### Protection States
+- **Locked** 🔒: Only `/projects/` directory can be modified
+- **Unlocked** 🔓: All files can be modified (development mode)
+
+### Commands
+- `lock` - Enable file protection
+- `unlock` - Disable file protection (default for development)
+- `status` - Check current protection state
+
+### Protected Areas (when locked)
+- `.claude/agents/` - Agent configurations
+- `.claude/hooks/` - System hooks
+- `docs/` - Documentation files
+- `templates/` - Template library
+- `tools/` - System tools
+- `examples/` - Example scripts
+- Root config files (README.md, CLAUDE.md, package.json)
+
+### Always Writable
+- `/projects/` - User Pine Scripts
+- `.claude/.lock_state` - Lock state file
+- `.claude/.onboarding_complete` - Onboarding marker
+- Other state files
+
+### Development Note
+The system defaults to **unlocked** during development to allow easy modifications. Use `lock` command when working on Pine Scripts to prevent accidental system file changes.
+
 ## Initialization
 When a user opens this project, you should:
 1. Recognize you're in the Pine Script development environment

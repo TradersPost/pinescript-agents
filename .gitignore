@@ -48,3 +48,4 @@ temp/
 .claude/.onboarding_complete
 .claude/.state.json
 .claude/.last_session
+.claude/.lock_state

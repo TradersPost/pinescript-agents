@@ -2,6 +2,7 @@
   "startup": ".claude/hooks/startup.sh",
   "user-prompt-submit": ".claude/hooks/user-prompt-submit.sh",
   "before-write": ".claude/hooks/before-write.sh",
+  "before-delete": ".claude/hooks/before-delete.sh",
   "after-edit": ".claude/hooks/after-edit.sh",
   "after-rename": ".claude/hooks/after-rename.sh"
 }

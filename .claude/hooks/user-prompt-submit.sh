@@ -6,6 +6,67 @@
 PROMPT="$1"
 PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
 
+# Check for lock/unlock commands
+if [[ "$PROMPT_LOWER" == "lock" ]]; then
+    echo "locked" > .claude/.lock_state
+    echo "🔒 SYSTEM LOCKED - File protection enabled"
+    echo ""
+    echo "Protected areas:"
+    echo "  ❌ System files (docs/, templates/, tools/, examples/)"
+    echo "  ❌ Configuration (.claude/agents/, .claude/hooks/)"
+    echo "  ❌ Root files (README.md, CLAUDE.md, package.json)"
+    echo ""
+    echo "Writable areas:"
+    echo "  ✓ /projects/ - Your Pine Scripts"
+    echo "  ✓ State files (.lock_state, .onboarding_complete)"
+    echo ""
+    echo "Use 'unlock' command to disable protection"
+    exit 0
+fi
+
+if [[ "$PROMPT_LOWER" == "unlock" ]]; then
+    echo "unlocked" > .claude/.lock_state
+    echo "🔓 SYSTEM UNLOCKED - All files can be modified"
+    echo ""
+    echo "⚠️  Warning: System files can now be changed"
+    echo "This mode is intended for development only"
+    echo ""
+    echo "Use 'lock' command to enable protection"
+    exit 0
+fi
+
+if [[ "$PROMPT_LOWER" == "status" ]]; then
+    if [ -f ".claude/.lock_state" ]; then
+        STATE=$(cat .claude/.lock_state)
+    else
+        STATE="unlocked"
+    fi
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔐 System Lock Status: $(echo $STATE | tr '[:lower:]' '[:upper:]')"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    
+    if [ "$STATE" = "locked" ]; then
+        echo "🔒 Protection: ENABLED"
+        echo "   • System files are protected"
+        echo "   • Only /projects/ can be modified"
+        echo "   • Use 'unlock' to disable"
+    else
+        echo "🔓 Protection: DISABLED"
+        echo "   • All files can be modified"
+        echo "   • Development mode active"
+        echo "   • Use 'lock' to enable protection"
+    fi
+    
+    # Count projects
+    PROJECT_COUNT=$(ls -1 projects/*.pine 2>/dev/null | grep -v blank.pine | wc -l)
+    echo ""
+    echo "📁 Projects: $PROJECT_COUNT Pine Script(s) in /projects/"
+    
+    exit 0
+fi
+
 # Check for single-word commands first
 if [[ "$PROMPT_LOWER" == "start" ]]; then
     echo "🚀 Running interactive start command..."
@@ -15,8 +76,17 @@ fi
 
 if [[ "$PROMPT_LOWER" == "help" ]]; then
     echo "📚 Pine Script Assistant Commands:"
+    echo ""
+    echo "Core Commands:"
     echo "  • start - Interactive setup guide"
     echo "  • help - This help message"
+    echo "  • status - Show system status and lock state"
+    echo ""
+    echo "Protection Commands:"
+    echo "  • lock - Enable file protection (only /projects/ writable)"
+    echo "  • unlock - Disable protection (development mode)"
+    echo ""
+    echo "Creation Commands:"
     echo "  • analyze [URL] - Analyze YouTube video"
     echo "  • create [description] - Create Pine Script"
     echo "  • examples - Show available examples"
