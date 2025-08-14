@@ -2,6 +2,8 @@
 
 A comprehensive Pine Script development environment powered by Claude Code's subagent system. This tool helps you create professional TradingView indicators and strategies with AI assistance.
 
+**Just type `start` to begin!**
+
 ## 🚀 Quick Start
 
 1. **Clone the repository**
@@ -19,22 +21,27 @@ A comprehensive Pine Script development environment powered by Claude Code's sub
    claude code .
    ```
 
-3. **Run the START command for interactive setup**
-   ```bash
-   ./start
+3. **Just type "start" in Claude chat**
    ```
-   This will guide you through:
-   - Creating custom scripts
-   - Analyzing YouTube videos
-   - Using templates
-   - Understanding capabilities
+   start
+   ```
+   This launches an interactive guide that helps you:
+   - Create custom scripts
+   - Analyze YouTube videos
+   - Choose from templates
+   - Understand system capabilities
 
-4. **Or tell Claude directly what you want**
+4. **Or jump straight to creating**
    ```
-   "Create an RSI divergence indicator with alerts"
-   "Build a mean reversion strategy using Bollinger Bands"
-   "Analyze this video: https://youtube.com/watch?v=..."
+   Create an RSI divergence indicator with alerts
+   Build a mean reversion strategy using Bollinger Bands
+   Analyze this video: https://youtube.com/watch?v=...
    ```
+
+   **Other helpful commands:**
+   - `help` - Show all available commands
+   - `examples` - List example scripts
+   - `templates` - Show quick templates
 
 ## 🤖 Specialized AI Agents
 
@@ -102,13 +109,16 @@ pinescript-agents/
 
 ## 💡 Usage Examples
 
-### Analyze a YouTube Video
-```bash
-# Provide a YouTube video about a trading strategy
-./analyze-video.sh "https://youtube.com/watch?v=..."
+### Quick Commands
+Just type these single words in Claude chat:
+- `start` - Launch interactive setup guide
+- `help` - Show available commands
+- `examples` - List all example scripts
+- `templates` - Show quick templates
 
-# Or in conversation:
-You: "Analyze this video: https://youtube.com/watch?v=..."
+### Analyze a YouTube Video
+```
+You: Analyze this video: https://youtube.com/watch?v=...
 Claude: [Extracts transcript, identifies components, creates specification]
 ```
 
@@ -160,6 +170,15 @@ Claude: [Uses pine-publisher to add documentation and ensure compliance]
 - **Risk Management**: Position sizing, stop losses
 - **Debugging**: Label outputs, table monitors
 - **Backtesting**: Performance metrics, statistics
+
+## 🗣️ Natural Language Interface
+
+No need for complex commands! Just talk to Claude naturally:
+
+- **Simple words trigger actions**: Type `start`, `help`, `examples`
+- **Describe what you want**: "Create a strategy that buys on RSI oversold"
+- **Share videos**: "Analyze this YouTube video: [URL]"
+- **Ask for help**: "What can you do?" or "Show me examples"
 
 ## 🎯 Key Features
 
