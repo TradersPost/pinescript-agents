@@ -154,6 +154,23 @@ if [[ "$PROMPT_LOWER" == *"publish"* ]] || [[ "$PROMPT_LOWER" == *"share"* ]] ||
     suggest_agent "publishing preparation" "pine-publisher"
 fi
 
+# Check for YouTube video URLs or analyze command
+if [[ "$PROMPT_LOWER" == *"youtube.com"* ]] || [[ "$PROMPT_LOWER" == *"youtu.be"* ]] || [[ "$PROMPT_LOWER" == *"analyze"* ]]; then
+    if [[ "$PROMPT_LOWER" == *"youtube.com/watch"* ]] || [[ "$PROMPT_LOWER" == *"youtu.be/"* ]]; then
+        echo "🎥 YouTube Video Detected!"
+        echo "The pine-visualizer agent will:"
+        echo "  1. Extract and analyze the video transcript"
+        echo "  2. Identify trading concepts and strategies"
+        echo "  3. Create a Pine Script specification"
+        echo "  4. Pass to pine-manager for implementation"
+        echo "---"
+        suggest_agent "YouTube video analysis" "pine-visualizer to extract strategy"
+    elif [[ "$PROMPT_LOWER" == "analyze "* ]]; then
+        echo "📊 Analysis request detected"
+        suggest_agent "video/content analysis" "pine-visualizer for extraction"
+    fi
+fi
+
 # Check for conceptual/planning requests
 if [[ "$PROMPT_LOWER" == *"how"* ]] || [[ "$PROMPT_LOWER" == *"plan"* ]] || [[ "$PROMPT_LOWER" == *"design"* ]] || [[ "$PROMPT_LOWER" == *"concept"* ]]; then
     if [[ "$PROMPT_LOWER" == *"indicator"* ]] || [[ "$PROMPT_LOWER" == *"strategy"* ]]; then

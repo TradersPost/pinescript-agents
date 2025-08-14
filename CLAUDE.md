@@ -80,6 +80,36 @@ Disable file protection (development mode):
 ### "status" or "Status" or "STATUS"
 Show current system status including lock state and project count.
 
+## YouTube Video Analysis
+
+### DETERMINISTIC BEHAVIOR
+When a user provides a YouTube URL, you MUST:
+
+1. **Immediately recognize** the YouTube URL in the prompt
+2. **Use the pine-visualizer agent** with Task tool to analyze the video
+3. **The agent will automatically**:
+   - Run `python tools/video-analyzer.py "<url>"`
+   - Extract transcript and trading concepts
+   - Generate Pine Script specification
+   - Show results to user
+
+### Example:
+```
+User: https://youtube.com/watch?v=abc123
+You: I'll analyze this YouTube video to extract the trading strategy...
+[Use Task tool with pine-visualizer agent]
+```
+
+**DO NOT**:
+- Ask if they want to analyze it
+- Wait for confirmation
+- Skip the analysis step
+
+**ALWAYS**:
+- Run the analysis immediately
+- Show extracted concepts
+- Proceed to implementation
+
 ## File Protection System
 
 The project includes a protection system to prevent accidental modification of system files:
