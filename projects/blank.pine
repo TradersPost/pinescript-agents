@@ -1,0 +1,13 @@
+//@version=6
+// This is a blank Pine Script template
+// It will be renamed and populated based on your requirements
+// 
+// Project: [To be defined]
+// Type: [Indicator/Strategy]
+// Created: [Date]
+// 
+// ============================================================================
+
+indicator("Blank Template", overlay=true)
+
+// Your Pine Script code will be generated here

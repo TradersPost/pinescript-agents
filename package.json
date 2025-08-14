@@ -1,0 +1,26 @@
+{
+  "name": "pinescript-agents",
+  "version": "1.0.0",
+  "description": "Claude Code Pine Script Development Assistant - A comprehensive tool for creating TradingView indicators and strategies",
+  "keywords": [
+    "pinescript",
+    "tradingview",
+    "trading",
+    "indicators",
+    "strategies",
+    "claude-code",
+    "ai-assistant"
+  ],
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "validate": "python tools/syntax-validator.py",
+    "analyze": "python tools/performance-analyzer.py",
+    "debug": "python tools/debug-injector.py",
+    "backtest": "python tools/backtest-metrics.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/pinescript-agents.git"
+  }
+}

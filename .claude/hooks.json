@@ -1,0 +1,6 @@
+{
+  "user-prompt-submit": ".claude/hooks/user-prompt-submit.sh",
+  "before-write": ".claude/hooks/before-write.sh",
+  "after-edit": ".claude/hooks/after-edit.sh",
+  "after-rename": ".claude/hooks/after-rename.sh"
+}

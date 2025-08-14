@@ -1,0 +1,183 @@
+//@version=6
+indicator("Multi-Timeframe RSI with Divergence", shorttitle="MTF RSI", overlay=false)
+
+// ============================================================================
+// DESCRIPTION
+// ============================================================================
+// Advanced RSI indicator with multi-timeframe analysis, divergence detection,
+// and confluence scoring for high-probability signals.
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+// RSI Settings
+rsiLength = input.int(14, "RSI Length", minval=1, group="RSI")
+rsiSource = input.source(close, "Source", group="RSI")
+
+// Timeframe Settings
+tf1 = input.timeframe("", "Timeframe 1 (Current)", group="Timeframes")
+tf2 = input.timeframe("15", "Timeframe 2", group="Timeframes")
+tf3 = input.timeframe("60", "Timeframe 3", group="Timeframes")
+tf4 = input.timeframe("240", "Timeframe 4", group="Timeframes")
+
+// Divergence Settings
+lookbackBars = input.int(50, "Divergence Lookback", minval=10, group="Divergence")
+divergenceThreshold = input.float(1.0, "Divergence Threshold", minval=0.1, group="Divergence")
+
+// Levels
+oversold = input.int(30, "Oversold Level", group="Levels")
+overbought = input.int(70, "Overbought Level", group="Levels")
+
+// Display
+showTable = input.bool(true, "Show MTF Table", group="Display")
+showDivergence = input.bool(true, "Show Divergence", group="Display")
+showConfluence = input.bool(true, "Show Confluence Score", group="Display")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+// Current Timeframe RSI
+rsi1 = ta.rsi(rsiSource, rsiLength)
+
+// Multi-Timeframe RSI
+rsi2 = request.security(syminfo.tickerid, tf2, ta.rsi(rsiSource, rsiLength))
+rsi3 = request.security(syminfo.tickerid, tf3, ta.rsi(rsiSource, rsiLength))
+rsi4 = request.security(syminfo.tickerid, tf4, ta.rsi(rsiSource, rsiLength))
+
+// Divergence Detection
+pivotHigh = ta.pivothigh(high, 5, 5)
+pivotLow = ta.pivotlow(low, 5, 5)
+
+// Find recent pivot points
+var float lastPivotHighPrice = na
+var float lastPivotHighRSI = na
+var int lastPivotHighBar = na
+
+var float lastPivotLowPrice = na
+var float lastPivotLowRSI = na
+var int lastPivotLowBar = na
+
+// Update pivot highs
+if not na(pivotHigh)
+    lastPivotHighPrice := high[5]
+    lastPivotHighRSI := rsi1[5]
+    lastPivotHighBar := bar_index - 5
+
+// Update pivot lows
+if not na(pivotLow)
+    lastPivotLowPrice := low[5]
+    lastPivotLowRSI := rsi1[5]
+    lastPivotLowBar := bar_index - 5
+
+// Detect divergences
+bullishDiv = false
+bearishDiv = false
+
+if not na(pivotLow) and not na(lastPivotLowPrice) and bar_index - lastPivotLowBar < lookbackBars
+    if low[5] < lastPivotLowPrice and rsi1[5] > lastPivotLowRSI
+        bullishDiv := true
+
+if not na(pivotHigh) and not na(lastPivotHighPrice) and bar_index - lastPivotHighBar < lookbackBars
+    if high[5] > lastPivotHighPrice and rsi1[5] < lastPivotHighRSI
+        bearishDiv := true
+
+// Confluence Score
+var float confluenceScore = 0.0
+confluenceScore := 0.0
+
+// Add points for oversold/overbought conditions
+if rsi1 < oversold
+    confluenceScore += 1
+if rsi2 < oversold
+    confluenceScore += 0.75
+if rsi3 < oversold
+    confluenceScore += 0.5
+if rsi4 < oversold
+    confluenceScore += 0.25
+
+if rsi1 > overbought
+    confluenceScore -= 1
+if rsi2 > overbought
+    confluenceScore -= 0.75
+if rsi3 > overbought
+    confluenceScore -= 0.5
+if rsi4 > overbought
+    confluenceScore -= 0.25
+
+// Add divergence to confluence
+if bullishDiv
+    confluenceScore += 2
+if bearishDiv
+    confluenceScore -= 2
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+// Main RSI
+rsiColor = rsi1 > overbought ? color.red : rsi1 < oversold ? color.green : color.blue
+plot(rsi1, "RSI", rsiColor, linewidth=2)
+
+// Multi-timeframe RSIs (thinner lines)
+plot(rsi2, "RSI TF2", color.new(color.orange, 50), linewidth=1)
+plot(rsi3, "RSI TF3", color.new(color.purple, 50), linewidth=1)
+plot(rsi4, "RSI TF4", color.new(color.gray, 50), linewidth=1)
+
+// Levels
+h1 = hline(overbought, "Overbought", color.red, hline.style_dashed)
+h2 = hline(oversold, "Oversold", color.green, hline.style_dashed)
+hline(50, "Middle", color.gray, hline.style_dotted)
+
+// Fill zones
+fill(h1, hline(100), color.new(color.red, 90))
+fill(h2, hline(0), color.new(color.green, 90))
+
+// Divergence markers
+plotshape(showDivergence and bullishDiv, "Bullish Divergence", shape.triangleup, 
+          location.bottom, color.green, size=size.small)
+plotshape(showDivergence and bearishDiv, "Bearish Divergence", shape.triangledown, 
+          location.top, color.red, size=size.small)
+
+// Confluence Score
+if showConfluence
+    plot(confluenceScore * 10 + 50, "Confluence Score", color.yellow, linewidth=1, style=plot.style_stepline)
+
+// ============================================================================
+// MTF TABLE
+// ============================================================================
+if showTable and barstate.islast
+    var table mtfTable = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 85))
+    
+    // Headers
+    table.cell(mtfTable, 0, 0, "Timeframe", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(mtfTable, 1, 0, "RSI", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    
+    // Current TF
+    table.cell(mtfTable, 0, 1, tf1 == "" ? timeframe.period : tf1, text_color=color.white, text_size=size.small)
+    rsi1Color = rsi1 > overbought ? color.red : rsi1 < oversold ? color.green : color.yellow
+    table.cell(mtfTable, 1, 1, str.tostring(rsi1, "#.#"), text_color=rsi1Color, text_size=size.small)
+    
+    // TF2
+    table.cell(mtfTable, 0, 2, tf2, text_color=color.white, text_size=size.small)
+    rsi2Color = rsi2 > overbought ? color.red : rsi2 < oversold ? color.green : color.yellow
+    table.cell(mtfTable, 1, 2, str.tostring(rsi2, "#.#"), text_color=rsi2Color, text_size=size.small)
+    
+    // TF3
+    table.cell(mtfTable, 0, 3, tf3, text_color=color.white, text_size=size.small)
+    rsi3Color = rsi3 > overbought ? color.red : rsi3 < oversold ? color.green : color.yellow
+    table.cell(mtfTable, 1, 3, str.tostring(rsi3, "#.#"), text_color=rsi3Color, text_size=size.small)
+    
+    // TF4
+    table.cell(mtfTable, 0, 4, tf4, text_color=color.white, text_size=size.small)
+    rsi4Color = rsi4 > overbought ? color.red : rsi4 < oversold ? color.green : color.yellow
+    table.cell(mtfTable, 1, 4, str.tostring(rsi4, "#.#"), text_color=rsi4Color, text_size=size.small)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+strongBullish = confluenceScore > 2
+strongBearish = confluenceScore < -2
+
+alertcondition(strongBullish, "Strong Bullish Signal", "Multiple timeframes oversold with bullish divergence")
+alertcondition(strongBearish, "Strong Bearish Signal", "Multiple timeframes overbought with bearish divergence")
+alertcondition(bullishDiv, "Bullish Divergence", "RSI Bullish Divergence Detected")
+alertcondition(bearishDiv, "Bearish Divergence", "RSI Bearish Divergence Detected")

@@ -1,0 +1,92 @@
+//@version=6
+strategy("MA Cross Strategy Template", overlay=true, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=10,
+         commission_type=strategy.commission.percent,
+         commission_value=0.1)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+// Moving Average Settings
+fastLength = input.int(20, "Fast MA Length", minval=1, group="Moving Averages")
+slowLength = input.int(50, "Slow MA Length", minval=1, group="Moving Averages")
+maType = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA", "HMA"], group="Moving Averages")
+
+// Strategy Settings
+longOnly = input.bool(false, "Long Only", group="Strategy")
+useStopLoss = input.bool(true, "Use Stop Loss", group="Strategy")
+stopLossPerc = input.float(2.0, "Stop Loss %", minval=0.1, step=0.1, group="Strategy")
+useTakeProfit = input.bool(true, "Use Take Profit", group="Strategy")
+takeProfitPerc = input.float(5.0, "Take Profit %", minval=0.1, step=0.1, group="Strategy")
+
+// Filter Settings
+useVolumeFilter = input.bool(true, "Use Volume Filter", group="Filters",
+                             tooltip="Only trade when volume is above average")
+volumeMultiplier = input.float(1.2, "Volume Multiplier", minval=0.1, group="Filters")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+// Moving Average Calculation
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "WMA" => ta.wma(source, length)
+        "HMA" => ta.hma(source, length)
+
+fastMA = ma(close, fastLength, maType)
+slowMA = ma(close, slowLength, maType)
+
+// Volume Filter
+avgVolume = ta.sma(volume, 20)
+volumeFilter = not useVolumeFilter or volume > avgVolume * volumeMultiplier
+
+// ============================================================================
+// STRATEGY CONDITIONS
+// ============================================================================
+longCondition = ta.crossover(fastMA, slowMA) and volumeFilter
+shortCondition = ta.crossunder(fastMA, slowMA) and volumeFilter and not longOnly
+
+// ============================================================================
+// STRATEGY EXECUTION
+// ============================================================================
+if longCondition
+    strategy.entry("Long", strategy.long)
+    
+if shortCondition
+    strategy.entry("Short", strategy.short)
+
+// Exit conditions
+if strategy.position_size > 0  // Long position
+    if useStopLoss
+        strategy.exit("Long SL", "Long", stop=strategy.position_avg_price * (1 - stopLossPerc/100))
+    if useTakeProfit
+        strategy.exit("Long TP", "Long", limit=strategy.position_avg_price * (1 + takeProfitPerc/100))
+    if ta.crossunder(fastMA, slowMA)
+        strategy.close("Long", comment="MA Cross")
+
+if strategy.position_size < 0  // Short position
+    if useStopLoss
+        strategy.exit("Short SL", "Short", stop=strategy.position_avg_price * (1 + stopLossPerc/100))
+    if useTakeProfit
+        strategy.exit("Short TP", "Short", limit=strategy.position_avg_price * (1 - takeProfitPerc/100))
+    if ta.crossover(fastMA, slowMA)
+        strategy.close("Short", comment="MA Cross")
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+plot(fastMA, "Fast MA", color=color.blue, linewidth=2)
+plot(slowMA, "Slow MA", color=color.red, linewidth=2)
+
+// Entry markers
+plotshape(longCondition, "Long Signal", shape.triangleup, location.belowbar, 
+          color.green, size=size.small)
+plotshape(shortCondition, "Short Signal", shape.triangledown, location.abovebar, 
+          color.red, size=size.small)
+
+// Fill between MAs
+fillColor = fastMA > slowMA ? color.new(color.green, 90) : color.new(color.red, 90)
+fill(plot(fastMA, display=display.none), plot(slowMA, display=display.none), fillColor)

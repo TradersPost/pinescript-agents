@@ -1,0 +1,88 @@
+//@version=6
+indicator("Bollinger Band Squeeze Detector", shorttitle="BB Squeeze", overlay=false)
+
+// ============================================================================
+// DESCRIPTION
+// ============================================================================
+// This indicator detects Bollinger Band squeeze conditions, which often 
+// precede significant price movements. A squeeze occurs when Bollinger Bands
+// contract inside Keltner Channels, indicating low volatility.
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+// Bollinger Band Settings
+bbLength = input.int(20, "BB Length", minval=1, group="Bollinger Bands")
+bbMult = input.float(2.0, "BB Multiplier", minval=0.1, step=0.1, group="Bollinger Bands")
+
+// Keltner Channel Settings
+kcLength = input.int(20, "KC Length", minval=1, group="Keltner Channels")
+kcMult = input.float(1.5, "KC Multiplier", minval=0.1, step=0.1, group="Keltner Channels")
+
+// Visual Settings
+showMomentum = input.bool(true, "Show Momentum", group="Display")
+showSqueezeCount = input.bool(true, "Show Squeeze Count", group="Display")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+// Bollinger Bands
+basis = ta.sma(close, bbLength)
+dev = bbMult * ta.stdev(close, bbLength)
+bbUpper = basis + dev
+bbLower = basis - dev
+
+// Keltner Channels
+kcMA = ta.ema(close, kcLength)
+kcRange = ta.atr(kcLength)
+kcUpper = kcMA + kcRange * kcMult
+kcLower = kcMA - kcRange * kcMult
+
+// Squeeze Detection
+squeeze = bbUpper < kcUpper and bbLower > kcLower
+noSqueeze = bbUpper > kcUpper or bbLower < kcLower
+
+// Momentum Calculation
+donchianMid = (ta.highest(high, kcLength) + ta.lowest(low, kcLength)) / 2
+momentum = close - donchianMid
+
+// Squeeze Duration Counter
+var int squeezeCount = 0
+squeezeCount := squeeze ? squeezeCount + 1 : 0
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+// Squeeze Dots
+plotshape(squeeze, "Squeeze", shape.circle, location.top, color.red, size=size.tiny)
+plotshape(noSqueeze, "No Squeeze", shape.circle, location.top, color.green, size=size.tiny)
+
+// Momentum Histogram
+momentumColor = momentum > 0 ? 
+                (momentum > momentum[1] ? color.new(color.green, 0) : color.new(color.green, 50)) : 
+                (momentum < momentum[1] ? color.new(color.red, 0) : color.new(color.red, 50))
+plot(showMomentum ? momentum : na, "Momentum", momentumColor, style=plot.style_histogram, linewidth=2)
+
+// Zero Line
+hline(0, "Zero", color.gray, hline.style_dotted)
+
+// ============================================================================
+// INFO TABLE
+// ============================================================================
+if showSqueezeCount and barstate.islast
+    var table infoTable = table.new(position.top_right, 2, 2, bgcolor=color.new(color.black, 85))
+    table.cell(infoTable, 0, 0, "Status", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, squeeze ? "SQUEEZE" : "NO SQUEEZE", 
+               text_color=squeeze ? color.red : color.green, text_size=size.small)
+    
+    if squeeze
+        table.cell(infoTable, 0, 1, "Duration", text_color=color.white, text_size=size.small)
+        table.cell(infoTable, 1, 1, str.tostring(squeezeCount) + " bars", 
+                   text_color=color.yellow, text_size=size.small)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+alertcondition(squeeze and not squeeze[1], "Squeeze Start", "Bollinger Squeeze Started")
+alertcondition(noSqueeze and not noSqueeze[1], "Squeeze Release", "Bollinger Squeeze Released - Potential Breakout")
+alertcondition(squeeze and squeezeCount == 10, "Extended Squeeze", "Squeeze lasting 10+ bars - Major move likely")

@@ -1,0 +1,42 @@
+//@version=6
+indicator("RSI Basic Template", shorttitle="RSI", overlay=false)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+rsiLength = input.int(14, "RSI Length", minval=1, group="RSI Settings",
+                      tooltip="Period for RSI calculation. Lower values are more responsive")
+rsiSource = input.source(close, "Source", group="RSI Settings")
+
+// Levels
+oversoldLevel = input.int(30, "Oversold Level", minval=0, maxval=100, group="Levels")
+overboughtLevel = input.int(70, "Overbought Level", minval=0, maxval=100, group="Levels")
+
+// Visual
+showDivergence = input.bool(false, "Show Divergence", group="Visual")
+highlightOB = input.bool(true, "Highlight Overbought/Oversold", group="Visual")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+rsiValue = ta.rsi(rsiSource, rsiLength)
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+plot(rsiValue, "RSI", color=color.blue, linewidth=2)
+
+// Level lines
+hline(oversoldLevel, "Oversold", color=color.green, linestyle=hline.style_dashed)
+hline(overboughtLevel, "Overbought", color=color.red, linestyle=hline.style_dashed)
+hline(50, "Middle", color=color.gray, linestyle=hline.style_dotted)
+
+// Background highlighting
+bgcolor(highlightOB and rsiValue > overboughtLevel ? color.new(color.red, 90) : na)
+bgcolor(highlightOB and rsiValue < oversoldLevel ? color.new(color.green, 90) : na)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+alertcondition(ta.crossover(rsiValue, oversoldLevel), "RSI Oversold Exit", "RSI crossing above oversold")
+alertcondition(ta.crossunder(rsiValue, overboughtLevel), "RSI Overbought Exit", "RSI crossing below overbought")
