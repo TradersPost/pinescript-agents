@@ -56,6 +56,17 @@ Pine Script has STRICT line continuation rules that MUST be followed:
 3. **Function arguments**: Each continuation must be indented
 4. **No explicit continuation character** in Pine Script v6
 
+#### SYSTEMATIC CHECK - Review ALL of these:
+- [ ] `indicator()` or `strategy()` declarations at the top
+- [ ] All `plot()`, `plotshape()`, `plotchar()` functions
+- [ ] All `if` statements with multiple conditions
+- [ ] All variable assignments with long expressions
+- [ ] All `strategy.entry()`, `strategy.exit()` calls
+- [ ] All `alertcondition()` calls
+- [ ] All `table.cell()` calls
+- [ ] All `label.new()` and `box.new()` calls
+- [ ] Any line longer than 80 characters
+
 #### CORRECT Line Wrapping:
 ```pinescript
 // CORRECT - indented continuation
@@ -216,6 +227,34 @@ if shortCondition
 // Plots
 plot(fastMA, "Fast MA", color.blue, 2)
 plot(slowMA, "Slow MA", color.red, 2)
+```
+
+## Line Wrapping Validation Process
+
+### BEFORE DELIVERING ANY CODE:
+1. **Search for opening parentheses** - Find all `(` and check if the closing `)` is on a different line
+2. **Validate indentation** - Ensure ALL continuation lines are indented MORE than the first line
+3. **Check common patterns**:
+   ```pinescript
+   // SCAN for these patterns and validate each one:
+   strategy(     // Must check indentation of all parameters
+   indicator(    // Must check indentation of all parameters  
+   if ... and    // Must check indentation of continued conditions
+   = ... +       // Must check indentation of continued expressions
+   plot(         // Must check indentation if multi-line
+   ```
+4. **Test mentally** - Read each multi-line statement and verify: "Is every continuation line indented MORE than the start?"
+
+### Common Mistake Patterns to Fix:
+```pinescript
+// WRONG - Often missed in initial declaration
+strategy(
+    title="...",     // ❌ Only 4 spaces indent
+    overlay=true)
+
+// CORRECT
+strategy(title="...",  // ✅ First param on same line
+     overlay=true)     // ✅ 5+ spaces indent
 ```
 
 ## TradingView Constraints
