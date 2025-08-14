@@ -1,0 +1,152 @@
+//@version=6
+indicator("Traditional Pivot Points", "Pivots", overlay=true)
+
+// === INPUTS ===
+pivot_type = input.string("Traditional", "Pivot Type", 
+                         options=["Traditional", "Fibonacci", "Camarilla"], group="Settings")
+show_labels = input.bool(true, "Show Labels", group="Display")
+show_levels = input.bool(true, "Show Levels", group="Display")
+line_extend = input.int(20, "Line Extension", minval=5, maxval=100, group="Display")
+
+// Colors
+pivot_color = input.color(color.yellow, "Pivot Color", group="Colors")
+support_color = input.color(color.green, "Support Color", group="Colors")
+resistance_color = input.color(color.red, "Resistance Color", group="Colors")
+
+// === VARIABLES ===
+var line[] pivot_lines = array.new<line>()
+var label[] pivot_labels = array.new<label>()
+
+// === FUNCTIONS ===
+// Get previous session's OHLC
+get_prev_ohlc() =>
+    prev_high = request.security(syminfo.tickerid, "1D", high[1], lookahead=barmerge.lookahead_off)
+    prev_low = request.security(syminfo.tickerid, "1D", low[1], lookahead=barmerge.lookahead_off)
+    prev_close = request.security(syminfo.tickerid, "1D", close[1], lookahead=barmerge.lookahead_off)
+    [prev_high, prev_low, prev_close]
+
+// Calculate pivot levels
+calculate_pivots(high_prev, low_prev, close_prev, pivot_type) =>
+    pivot_point = (high_prev + low_prev + close_prev) / 3
+    
+    if pivot_type == "Traditional"
+        r1 = 2 * pivot_point - low_prev
+        s1 = 2 * pivot_point - high_prev
+        r2 = pivot_point + (high_prev - low_prev)
+        s2 = pivot_point - (high_prev - low_prev)
+        r3 = high_prev + 2 * (pivot_point - low_prev)
+        s3 = low_prev - 2 * (high_prev - pivot_point)
+        [pivot_point, r1, r2, r3, s1, s2, s3]
+    
+    else if pivot_type == "Fibonacci"
+        r1 = pivot_point + 0.382 * (high_prev - low_prev)
+        s1 = pivot_point - 0.382 * (high_prev - low_prev)
+        r2 = pivot_point + 0.618 * (high_prev - low_prev)
+        s2 = pivot_point - 0.618 * (high_prev - low_prev)
+        r3 = pivot_point + (high_prev - low_prev)
+        s3 = pivot_point - (high_prev - low_prev)
+        [pivot_point, r1, r2, r3, s1, s2, s3]
+    
+    else  // Camarilla
+        range = high_prev - low_prev
+        r1 = close_prev + range * 0.0916
+        s1 = close_prev - range * 0.0916
+        r2 = close_prev + range * 0.183
+        s2 = close_prev - range * 0.183
+        r3 = close_prev + range * 0.275
+        s3 = close_prev - range * 0.275
+        [close_prev, r1, r2, r3, s1, s2, s3]  // PP = Previous Close for Camarilla
+
+// Draw pivot line
+draw_pivot_line(price, line_color, line_style, label_text) =>
+    start_bar = bar_index
+    end_bar = bar_index + line_extend
+    
+    if show_levels
+        pivot_line = line.new(start_bar, price, end_bar, price,
+                             color=line_color, width=1, style=line_style)
+        array.push(pivot_lines, pivot_line)
+    
+    if show_labels
+        pivot_label = label.new(end_bar, price, text=label_text,
+                               color=line_color, textcolor=color.white,
+                               size=size.small, style=label.style_label_left)
+        array.push(pivot_labels, pivot_label)
+
+// Clear old drawings
+clear_drawings() =>
+    for i = 0 to array.size(pivot_lines) - 1
+        line.delete(array.get(pivot_lines, i))
+    array.clear(pivot_lines)
+    
+    for i = 0 to array.size(pivot_labels) - 1
+        label.delete(array.get(pivot_labels, i))
+    array.clear(pivot_labels)
+
+// === MAIN LOGIC ===
+// Check for new trading day
+if timeframe.change("1D")
+    clear_drawings()
+    
+    [prev_high, prev_low, prev_close] = get_prev_ohlc()
+    
+    if not na(prev_high) and not na(prev_low) and not na(prev_close)
+        [pp, r1, r2, r3, s1, s2, s3] = calculate_pivots(prev_high, prev_low, prev_close, pivot_type)
+        
+        // Draw pivot point
+        draw_pivot_line(pp, pivot_color, line.style_solid, "PP")
+        
+        // Draw resistance levels
+        draw_pivot_line(r1, resistance_color, line.style_solid, "R1")
+        draw_pivot_line(r2, resistance_color, line.style_dashed, "R2")
+        draw_pivot_line(r3, resistance_color, line.style_dotted, "R3")
+        
+        // Draw support levels
+        draw_pivot_line(s1, support_color, line.style_solid, "S1")
+        draw_pivot_line(s2, support_color, line.style_dashed, "S2")
+        draw_pivot_line(s3, support_color, line.style_dotted, "S3")
+
+// === TABLE ===
+if barstate.islast
+    [prev_high, prev_low, prev_close] = get_prev_ohlc()
+    
+    if not na(prev_high) and not na(prev_low) and not na(prev_close)
+        [pp, r1, r2, r3, s1, s2, s3] = calculate_pivots(prev_high, prev_low, prev_close, pivot_type)
+        
+        var table pivot_table = table.new(position.top_right, 2, 8, bgcolor=color.white, border_width=1)
+        
+        table.cell(pivot_table, 0, 0, "Pivot Levels", text_color=color.black, text_size=size.small)
+        table.cell(pivot_table, 1, 0, "Price", text_color=color.black, text_size=size.small)
+        
+        table.cell(pivot_table, 0, 1, "R3", text_color=color.red, text_size=size.small)
+        table.cell(pivot_table, 1, 1, str.tostring(r3, "#.####"), text_color=color.black, text_size=size.small)
+        
+        table.cell(pivot_table, 0, 2, "R2", text_color=color.red, text_size=size.small)
+        table.cell(pivot_table, 1, 2, str.tostring(r2, "#.####"), text_color=color.black, text_size=size.small)
+        
+        table.cell(pivot_table, 0, 3, "R1", text_color=color.red, text_size=size.small)
+        table.cell(pivot_table, 1, 3, str.tostring(r1, "#.####"), text_color=color.black, text_size=size.small)
+        
+        table.cell(pivot_table, 0, 4, "PP", text_color=pivot_color, text_size=size.small)
+        table.cell(pivot_table, 1, 4, str.tostring(pp, "#.####"), text_color=color.black, text_size=size.small)
+        
+        table.cell(pivot_table, 0, 5, "S1", text_color=color.green, text_size=size.small)
+        table.cell(pivot_table, 1, 5, str.tostring(s1, "#.####"), text_color=color.black, text_size=size.small)
+        
+        table.cell(pivot_table, 0, 6, "S2", text_color=color.green, text_size=size.small)
+        table.cell(pivot_table, 1, 6, str.tostring(s2, "#.####"), text_color=color.black, text_size=size.small)
+        
+        table.cell(pivot_table, 0, 7, "S3", text_color=color.green, text_size=size.small)
+        table.cell(pivot_table, 1, 7, str.tostring(s3, "#.####"), text_color=color.black, text_size=size.small)
+
+// === ALERTS ===
+if barstate.isconfirmed
+    [prev_high, prev_low, prev_close] = get_prev_ohlc()
+    
+    if not na(prev_high) and not na(prev_low) and not na(prev_close)
+        [pp, r1, r2, r3, s1, s2, s3] = calculate_pivots(prev_high, prev_low, prev_close, pivot_type)
+        
+        alertcondition(ta.crossover(close, pp), "PP Break Up", "Price crossed above Pivot Point")
+        alertcondition(ta.crossunder(close, pp), "PP Break Down", "Price crossed below Pivot Point")
+        alertcondition(ta.crossover(close, r1), "R1 Break", "Price crossed above R1")
+        alertcondition(ta.crossunder(close, s1), "S1 Break", "Price crossed below S1")

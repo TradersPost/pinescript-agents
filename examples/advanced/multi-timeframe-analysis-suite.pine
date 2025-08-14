@@ -1,0 +1,351 @@
+//@version=6
+indicator("Multi-Timeframe Analysis Suite", "MTF Suite", overlay=false, 
+         max_lines_count=100, max_labels_count=50, max_boxes_count=50)
+
+// === INPUTS ===
+// Timeframes
+tf1 = input.timeframe("5", "TF1 (Fastest)", group="Timeframes")
+tf2 = input.timeframe("15", "TF2", group="Timeframes")
+tf3 = input.timeframe("1H", "TF3", group="Timeframes")
+tf4 = input.timeframe("4H", "TF4", group="Timeframes")
+tf5 = input.timeframe("1D", "TF5 (Slowest)", group="Timeframes")
+
+// Indicators
+ma_type = input.string("EMA", "Moving Average", options=["SMA", "EMA", "WMA"], group="Indicators")
+ma_length = input.int(20, "MA Length", minval=5, maxval=200, group="Indicators")
+rsi_length = input.int(14, "RSI Length", minval=2, maxval=50, group="Indicators")
+stoch_k = input.int(14, "Stochastic %K", minval=5, maxval=50, group="Indicators")
+stoch_d = input.int(3, "Stochastic %D", minval=1, maxval=10, group="Indicators")
+
+// Analysis
+trend_threshold = input.float(0.5, "Trend Threshold %", minval=0.1, maxval=2.0, group="Analysis")
+momentum_threshold = input.int(30, "Momentum Threshold", minval=20, maxval=40, group="Analysis")
+show_divergences = input.bool(true, "Show Divergences", group="Analysis")
+show_confluences = input.bool(true, "Show Confluences", group="Analysis")
+
+// Display
+show_table = input.bool(true, "Show Analysis Table", group="Display")
+show_signals = input.bool(true, "Show Trade Signals", group="Display")
+table_position = input.string("top_right", "Table Position", 
+                             options=["top_left", "top_right", "bottom_left", "bottom_right"], group="Display")
+
+// === TYPES ===
+type TimeframeData
+    string timeframe
+    float ma_value
+    float ma_slope
+    float rsi_value
+    float stoch_k_value
+    float stoch_d_value
+    int trend_direction  // 1 = bullish, -1 = bearish, 0 = neutral
+    int momentum_state   // 1 = overbought, -1 = oversold, 0 = neutral
+    bool ma_above_price
+    float atr_value
+
+type MarketAnalysis
+    array<TimeframeData> timeframes
+    int trend_alignment_score
+    int momentum_alignment_score
+    string overall_bias
+    float confluence_strength
+    bool has_bullish_divergence
+    bool has_bearish_divergence
+
+type TradingSignal
+    string signal_type   // "BUY", "SELL", "WAIT"
+    float strength      // 0-1
+    string reasoning
+    array<string> supporting_factors
+    array<string> warning_factors
+
+// === VARIABLES ===
+var MarketAnalysis current_analysis = MarketAnalysis.new()
+var TradingSignal current_signal = TradingSignal.new()
+var label[] signal_labels = array.new<label>()
+
+// === FUNCTIONS ===
+// Get moving average based on type
+get_ma(src, length, ma_type) =>
+    switch ma_type
+        "SMA" => ta.sma(src, length)
+        "EMA" => ta.ema(src, length)
+        "WMA" => ta.wma(src, length)
+        => ta.ema(src, length)
+
+// Calculate MA slope as percentage
+get_ma_slope(ma_current, ma_previous) =>
+    if ma_previous != 0
+        ((ma_current - ma_previous) / ma_previous) * 100
+    else
+        0.0
+
+// Determine trend direction from MA slope
+get_trend_direction(ma_slope, threshold) =>
+    if ma_slope > threshold
+        1   // Bullish
+    else if ma_slope < -threshold
+        -1  // Bearish
+    else
+        0   // Neutral
+
+// Determine momentum state from oscillators
+get_momentum_state(rsi_val, stoch_val, threshold) =>
+    overbought_level = 100 - threshold
+    oversold_level = threshold
+    
+    if rsi_val > overbought_level or stoch_val > overbought_level
+        1   // Overbought
+    else if rsi_val < oversold_level or stoch_val < oversold_level
+        -1  // Oversold
+    else
+        0   // Neutral
+
+// Get multi-timeframe data
+get_mtf_data(tf, ma_len, rsi_len, stoch_k_len, stoch_d_len) =>
+    [ma_val, ma_prev, rsi_val, stoch_k_val, stoch_d_val, close_val, atr_val] = 
+        request.security(syminfo.tickerid, tf, 
+            [get_ma(close, ma_len, ma_type), get_ma(close[1], ma_len, ma_type),
+             ta.rsi(close, rsi_len), ta.stoch(close, high, low, stoch_k_len),
+             ta.sma(ta.stoch(close, high, low, stoch_k_len), stoch_d_len),
+             close, ta.atr(14)], lookahead=barmerge.lookahead_off)
+    
+    ma_slope = get_ma_slope(ma_val, ma_prev)
+    trend_dir = get_trend_direction(ma_slope, trend_threshold)
+    momentum = get_momentum_state(rsi_val, stoch_k_val, momentum_threshold)
+    ma_above = close_val > ma_val
+    
+    TimeframeData.new(tf, ma_val, ma_slope, rsi_val, stoch_k_val, stoch_d_val,
+                      trend_dir, momentum, ma_above, atr_val)
+
+// Analyze all timeframes
+analyze_market() =>
+    // Clear previous data
+    current_analysis.timeframes := array.new<TimeframeData>()
+    
+    // Collect data from all timeframes
+    tf1_data = get_mtf_data(tf1, ma_length, rsi_length, stoch_k, stoch_d)
+    tf2_data = get_mtf_data(tf2, ma_length, rsi_length, stoch_k, stoch_d)
+    tf3_data = get_mtf_data(tf3, ma_length, rsi_length, stoch_k, stoch_d)
+    tf4_data = get_mtf_data(tf4, ma_length, rsi_length, stoch_k, stoch_d)
+    tf5_data = get_mtf_data(tf5, ma_length, rsi_length, stoch_k, stoch_d)
+    
+    array.push(current_analysis.timeframes, tf1_data)
+    array.push(current_analysis.timeframes, tf2_data)
+    array.push(current_analysis.timeframes, tf3_data)
+    array.push(current_analysis.timeframes, tf4_data)
+    array.push(current_analysis.timeframes, tf5_data)
+    
+    // Calculate alignment scores
+    trend_score = 0
+    momentum_score = 0
+    
+    for i = 0 to array.size(current_analysis.timeframes) - 1
+        tf_data = array.get(current_analysis.timeframes, i)
+        trend_score += tf_data.trend_direction
+        momentum_score += tf_data.momentum_state
+    
+    current_analysis.trend_alignment_score := trend_score
+    current_analysis.momentum_alignment_score := momentum_score
+    
+    // Determine overall bias
+    if trend_score >= 3
+        current_analysis.overall_bias := "BULLISH"
+    else if trend_score <= -3
+        current_analysis.overall_bias := "BEARISH"
+    else
+        current_analysis.overall_bias := "NEUTRAL"
+    
+    // Calculate confluence strength (0-1)
+    max_score = array.size(current_analysis.timeframes)
+    confluence = math.abs(trend_score) / max_score
+    current_analysis.confluence_strength := confluence
+
+// Check for divergences
+check_divergences() =>
+    if not show_divergences
+        return
+    
+    // Simplified divergence detection
+    // Compare price action vs momentum across timeframes
+    
+    price_higher = close > close[5]
+    rsi_current = ta.rsi(close, rsi_length)
+    rsi_previous = ta.rsi(close[5], rsi_length)
+    
+    // Bullish divergence: price lower, momentum higher
+    bullish_div = close < close[5] and rsi_current > rsi_previous and rsi_current < 40
+    
+    // Bearish divergence: price higher, momentum lower
+    bearish_div = close > close[5] and rsi_current < rsi_previous and rsi_current > 60
+    
+    current_analysis.has_bullish_divergence := bullish_div
+    current_analysis.has_bearish_divergence := bearish_div
+
+// Generate trading signal
+generate_signal() =>
+    supporting_factors = array.new<string>()
+    warning_factors = array.new<string>()
+    
+    trend_score = current_analysis.trend_alignment_score
+    momentum_score = current_analysis.momentum_alignment_score
+    confluence = current_analysis.confluence_strength
+    
+    // Determine signal type
+    signal_type = "WAIT"
+    signal_strength = 0.0
+    reasoning = ""
+    
+    // Strong bullish alignment
+    if trend_score >= 4 and confluence > 0.6
+        signal_type := "BUY"
+        signal_strength := confluence
+        reasoning := "Strong bullish alignment across timeframes"
+        array.push(supporting_factors, "Trend Score: " + str.tostring(trend_score))
+        array.push(supporting_factors, "Confluence: " + str.tostring(confluence * 100, "#") + "%")
+    
+    // Strong bearish alignment
+    else if trend_score <= -4 and confluence > 0.6
+        signal_type := "SELL"
+        signal_strength := confluence
+        reasoning := "Strong bearish alignment across timeframes"
+        array.push(supporting_factors, "Trend Score: " + str.tostring(trend_score))
+        array.push(supporting_factors, "Confluence: " + str.tostring(confluence * 100, "#") + "%")
+    
+    // Moderate signals with confirmations
+    else if trend_score >= 2 and momentum_score >= 0
+        signal_type := "BUY"
+        signal_strength := confluence * 0.7
+        reasoning := "Moderate bullish bias with momentum support"
+        array.push(supporting_factors, "Positive trend direction")
+        if momentum_score < 0
+            array.push(warning_factors, "Mixed momentum signals")
+    
+    else if trend_score <= -2 and momentum_score <= 0
+        signal_type := "SELL" 
+        signal_strength := confluence * 0.7
+        reasoning := "Moderate bearish bias with momentum support"
+        array.push(supporting_factors, "Negative trend direction")
+        if momentum_score > 0
+            array.push(warning_factors, "Mixed momentum signals")
+    
+    else
+        reasoning := "No clear directional bias"
+        array.push(warning_factors, "Conflicting timeframe signals")
+    
+    // Divergence adjustments
+    if current_analysis.has_bullish_divergence and signal_type != "BUY"
+        array.push(supporting_factors, "Bullish divergence detected")
+    
+    if current_analysis.has_bearish_divergence and signal_type != "SELL"
+        array.push(supporting_factors, "Bearish divergence detected")
+    
+    current_signal.signal_type := signal_type
+    current_signal.strength := signal_strength
+    current_signal.reasoning := reasoning
+    current_signal.supporting_factors := supporting_factors
+    current_signal.warning_factors := warning_factors
+
+// Draw signal on chart
+draw_signal() =>
+    if not show_signals or current_signal.signal_type == "WAIT"
+        return
+    
+    signal_color = current_signal.signal_type == "BUY" ? color.green : color.red
+    signal_text = current_signal.signal_type + "\n" + str.tostring(current_signal.strength * 100, "#") + "%"
+    
+    signal_label = label.new(bar_index, current_signal.signal_type == "BUY" ? low : high,
+                            text=signal_text, color=signal_color, textcolor=color.white,
+                            size=size.normal, style=current_signal.signal_type == "BUY" ? 
+                            label.style_label_up : label.style_label_down)
+    
+    array.push(signal_labels, signal_label)
+    
+    // Clean old labels
+    if array.size(signal_labels) > 5
+        old_label = array.shift(signal_labels)
+        label.delete(old_label)
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    analyze_market()
+    check_divergences()
+    generate_signal()
+    draw_signal()
+
+// === PLOTTING ===
+// Plot alignment scores
+plot(current_analysis.trend_alignment_score, title="Trend Alignment", 
+     color=current_analysis.trend_alignment_score > 0 ? color.green : color.red, linewidth=2)
+plot(current_analysis.momentum_alignment_score, title="Momentum Alignment",
+     color=current_analysis.momentum_alignment_score > 0 ? color.blue : color.orange, linewidth=1)
+
+// Plot zero line and thresholds
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
+hline(3, "Strong Bullish", color=color.green, linestyle=hline.style_dotted)
+hline(-3, "Strong Bearish", color=color.red, linestyle=hline.style_dotted)
+
+// Background color for strong signals
+bgcolor(current_analysis.trend_alignment_score >= 4 ? color.new(color.green, 90) :
+        current_analysis.trend_alignment_score <= -4 ? color.new(color.red, 90) : na)
+
+// === TABLE ===
+if barstate.islast and show_table
+    table_pos = switch table_position
+        "top_left" => position.top_left
+        "top_right" => position.top_right
+        "bottom_left" => position.bottom_left
+        "bottom_right" => position.bottom_right
+        => position.top_right
+    
+    var table mtf_table = table.new(table_pos, 6, 8, bgcolor=color.white, border_width=1)
+    
+    // Headers
+    table.cell(mtf_table, 0, 0, "Timeframe", text_color=color.black, text_size=size.small)
+    table.cell(mtf_table, 1, 0, "Trend", text_color=color.black, text_size=size.small)
+    table.cell(mtf_table, 2, 0, "MA Slope", text_color=color.black, text_size=size.small)
+    table.cell(mtf_table, 3, 0, "RSI", text_color=color.black, text_size=size.small)
+    table.cell(mtf_table, 4, 0, "Stoch", text_color=color.black, text_size=size.small)
+    table.cell(mtf_table, 5, 0, "Status", text_color=color.black, text_size=size.small)
+    
+    // Data rows
+    for i = 0 to array.size(current_analysis.timeframes) - 1
+        tf_data = array.get(current_analysis.timeframes, i)
+        row = i + 1
+        
+        table.cell(mtf_table, 0, row, tf_data.timeframe, text_color=color.black, text_size=size.small)
+        
+        trend_text = tf_data.trend_direction == 1 ? "↑" : tf_data.trend_direction == -1 ? "↓" : "→"
+        trend_color = tf_data.trend_direction == 1 ? color.green : tf_data.trend_direction == -1 ? color.red : color.gray
+        table.cell(mtf_table, 1, row, trend_text, text_color=trend_color, text_size=size.small)
+        
+        table.cell(mtf_table, 2, row, str.tostring(tf_data.ma_slope, "#.##"), 
+                  text_color=tf_data.ma_slope > 0 ? color.green : color.red, text_size=size.small)
+        
+        table.cell(mtf_table, 3, row, str.tostring(tf_data.rsi_value, "#"), 
+                  text_color=color.black, text_size=size.small)
+        
+        table.cell(mtf_table, 4, row, str.tostring(tf_data.stoch_k_value, "#"), 
+                  text_color=color.black, text_size=size.small)
+        
+        status_text = tf_data.ma_above_price ? "Above MA" : "Below MA"
+        status_color = tf_data.ma_above_price ? color.green : color.red
+        table.cell(mtf_table, 5, row, status_text, text_color=status_color, text_size=size.small)
+    
+    // Summary row
+    table.cell(mtf_table, 0, 7, "SIGNAL", text_color=color.black, text_size=size.normal)
+    signal_color = current_signal.signal_type == "BUY" ? color.green : 
+                   current_signal.signal_type == "SELL" ? color.red : color.gray
+    table.cell(mtf_table, 1, 7, current_signal.signal_type, text_color=signal_color, text_size=size.normal)
+    table.cell(mtf_table, 2, 7, str.tostring(current_signal.strength * 100, "#") + "%", 
+              text_color=signal_color, text_size=size.small)
+    table.cell(mtf_table, 3, 7, current_analysis.overall_bias, text_color=signal_color, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(current_signal.signal_type == "BUY" and current_signal.strength > 0.7, 
+               "Strong Buy Signal", "Strong bullish alignment detected")
+alertcondition(current_signal.signal_type == "SELL" and current_signal.strength > 0.7,
+               "Strong Sell Signal", "Strong bearish alignment detected")
+alertcondition(current_analysis.trend_alignment_score == 5, "Perfect Bull Alignment", 
+               "All timeframes bullish")
+alertcondition(current_analysis.trend_alignment_score == -5, "Perfect Bear Alignment",
+               "All timeframes bearish")

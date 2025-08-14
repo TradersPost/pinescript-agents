@@ -13,6 +13,7 @@ Simple, focused indicators that demonstrate core concepts without excessive comp
 - **support-resistance-basic.pine** - Simple pivot-based support/resistance
 - **vwap-basic.pine** - Volume Weighted Average Price with standard deviation bands
 - **mtf-trend-alignment.pine** - Multi-timeframe trend alignment indicator
+- **pivot-points-traditional.pine** - Traditional, Fibonacci, and Camarilla pivot points
 
 ### `/intermediate/` - Medium Complexity (100-300 lines)
 More sophisticated indicators with multiple features and better user experience.
@@ -22,6 +23,7 @@ More sophisticated indicators with multiple features and better user experience.
 - **volume-profile-session.pine** - Session-based volume profile with POC and value areas
 - **liquidity-zones-ict.pine** - ICT liquidity pool detection with sweep alerts
 - **dynamic-support-resistance.pine** - Advanced dynamic S&R with strength calculation
+- **rsi-divergence-scanner.pine** - Complete RSI divergence detection (regular & hidden)
 
 ### `/advanced/` - Complex Indicators (> 300 lines)
 Comprehensive, production-ready indicators with advanced features and professional UX.
@@ -29,6 +31,7 @@ Comprehensive, production-ready indicators with advanced features and profession
 - **dynamic-swing-anchored-vwap.pine** - Swing-anchored VWAP with multiple anchor points
 - **smart-money-concepts-suite.pine** - Complete SMC toolkit (BOS, CHoCH, OB, FVG, Liquidity)
 - **comprehensive-volume-profile.pine** - Advanced volume profile with statistics and multi-timeframe
+- **multi-timeframe-analysis-suite.pine** - Complete MTF trend & momentum analysis with signals
 
 ## Key Concepts Covered
 

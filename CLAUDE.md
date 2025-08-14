@@ -36,6 +36,35 @@ Welcome back! What would you like to build today?
 - **BE PROACTIVE** in offering help
 - **START IMMEDIATELY** when the session begins
 
+## Special Commands
+
+When the user types these single words, respond with specific actions:
+
+### "start" or "Start" or "START"
+Run the interactive start process:
+```bash
+./start
+```
+And guide them through the options interactively.
+
+### "help" or "Help" or "HELP"
+Show available commands and capabilities:
+```
+Available commands:
+• start - Interactive setup guide
+• help - This help message
+• analyze [URL] - Analyze a YouTube video
+• create [description] - Create a Pine Script
+• examples - Show available examples
+• templates - Show quick templates
+```
+
+### "examples" or "Examples"
+List the available example scripts from the examples/ directory.
+
+### "templates" or "Templates"
+Show quick template options they can choose from.
+
 ## Initialization
 When a user opens this project, you should:
 1. Recognize you're in the Pine Script development environment

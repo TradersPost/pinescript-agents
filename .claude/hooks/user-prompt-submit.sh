@@ -6,6 +6,42 @@
 PROMPT="$1"
 PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
 
+# Check for single-word commands first
+if [[ "$PROMPT_LOWER" == "start" ]]; then
+    echo "🚀 Running interactive start command..."
+    ./start
+    exit 0
+fi
+
+if [[ "$PROMPT_LOWER" == "help" ]]; then
+    echo "📚 Pine Script Assistant Commands:"
+    echo "  • start - Interactive setup guide"
+    echo "  • help - This help message"
+    echo "  • analyze [URL] - Analyze YouTube video"
+    echo "  • create [description] - Create Pine Script"
+    echo "  • examples - Show available examples"
+    echo "  • templates - Show quick templates"
+    exit 0
+fi
+
+if [[ "$PROMPT_LOWER" == "examples" ]]; then
+    echo "📁 Available example scripts:"
+    ls -1 examples/*/*.pine 2>/dev/null | sed 's/examples\//  /'
+    exit 0
+fi
+
+if [[ "$PROMPT_LOWER" == "templates" ]]; then
+    echo "🎯 Quick templates available:"
+    echo "  • RSI divergence indicator"
+    echo "  • Moving average crossover strategy"
+    echo "  • Bollinger Band squeeze"
+    echo "  • Volume profile"
+    echo "  • MACD with alerts"
+    echo ""
+    echo "Tell Claude which template you want!"
+    exit 0
+fi
+
 # Function to suggest agent usage
 suggest_agent() {
     echo "🤖 Pine Script Agent Router: Detected $1 request"

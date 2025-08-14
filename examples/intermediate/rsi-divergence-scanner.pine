@@ -1,0 +1,324 @@
+//@version=6
+indicator("RSI Divergence Scanner", "RSI Div", overlay=true, max_lines_count=50, max_labels_count=20)
+
+// === INPUTS ===
+rsi_length = input.int(14, "RSI Length", minval=2, maxval=50, group="RSI Settings")
+divergence_lookback = input.int(5, "Divergence Lookback", minval=3, maxval=20, group="Divergence Settings")
+min_bars_between = input.int(3, "Min Bars Between Pivots", minval=2, maxval=10, group="Divergence Settings")
+rsi_overbought = input.float(70.0, "RSI Overbought", minval=60.0, maxval=90.0, group="RSI Settings")
+rsi_oversold = input.float(30.0, "RSI Oversold", minval=10.0, maxval=40.0, group="RSI Settings")
+
+// Display Settings
+show_rsi_lines = input.bool(true, "Show RSI Divergence Lines", group="Display")
+show_price_lines = input.bool(true, "Show Price Divergence Lines", group="Display")
+show_labels = input.bool(true, "Show Divergence Labels", group="Display")
+line_extend = input.int(5, "Line Extension", minval=0, maxval=20, group="Display")
+
+// Alert Settings
+alert_bullish = input.bool(true, "Alert Bullish Divergence", group="Alerts")
+alert_bearish = input.bool(true, "Alert Bearish Divergence", group="Alerts")
+alert_hidden = input.bool(false, "Alert Hidden Divergence", group="Alerts")
+
+// Colors
+bull_div_color = input.color(color.green, "Bullish Divergence", group="Colors")
+bear_div_color = input.color(color.red, "Bearish Divergence", group="Colors")
+hidden_bull_color = input.color(color.blue, "Hidden Bullish", group="Colors")
+hidden_bear_color = input.color(color.orange, "Hidden Bearish", group="Colors")
+
+// === TYPES ===
+type DivergencePoint
+    int bar_index
+    float price_value
+    float rsi_value
+    bool is_high
+    bool is_pivot
+
+type Divergence
+    DivergencePoint point1
+    DivergencePoint point2
+    string div_type  // "regular_bull", "regular_bear", "hidden_bull", "hidden_bear"
+    bool is_confirmed
+    int detection_bar
+
+// === VARIABLES ===
+var array<DivergencePoint> pivot_highs = array.new<DivergencePoint>()
+var array<DivergencePoint> pivot_lows = array.new<DivergencePoint>()
+var array<Divergence> detected_divergences = array.new<Divergence>()
+var line[] divergence_lines = array.new<line>()
+var label[] divergence_labels = array.new<label>()
+
+// === FUNCTIONS ===
+// Calculate RSI
+rsi_value = ta.rsi(close, rsi_length)
+
+// Get pivot points
+pivot_high = ta.pivothigh(high, divergence_lookback, divergence_lookback)
+pivot_low = ta.pivotlow(low, divergence_lookback, divergence_lookback)
+rsi_pivot_high = ta.pivothigh(rsi_value, divergence_lookback, divergence_lookback)
+rsi_pivot_low = ta.pivotlow(rsi_value, divergence_lookback, divergence_lookback)
+
+// Check if RSI is in extreme zone
+is_rsi_overbought(rsi_val) => rsi_val >= rsi_overbought
+is_rsi_oversold(rsi_val) => rsi_val <= rsi_oversold
+
+// Add pivot point to array
+add_pivot_point(pivots_array, bar_idx, price_val, rsi_val, is_high_pivot) =>
+    new_point = DivergencePoint.new(bar_idx, price_val, rsi_val, is_high_pivot, true)
+    array.push(pivots_array, new_point)
+    
+    // Keep only recent pivots
+    while array.size(pivots_array) > 10
+        array.shift(pivots_array)
+
+// Find divergence between two points
+check_divergence(point1, point2, div_type) =>
+    if point1.is_high != point2.is_high
+        false  // Both points must be same type (high or low)
+    else
+        bars_between = point2.bar_index - point1.bar_index
+        bars_between >= min_bars_between
+
+// Detect regular bullish divergence
+detect_regular_bullish() =>
+    if array.size(pivot_lows) < 2
+        false
+    else
+        recent_low = array.get(pivot_lows, array.size(pivot_lows) - 1)
+        previous_low = array.get(pivot_lows, array.size(pivot_lows) - 2)
+        
+        // Price makes lower low, RSI makes higher low
+        price_lower = recent_low.price_value < previous_low.price_value
+        rsi_higher = recent_low.rsi_value > previous_low.rsi_value
+        rsi_oversold = is_rsi_oversold(recent_low.rsi_value) or is_rsi_oversold(previous_low.rsi_value)
+        
+        price_lower and rsi_higher and rsi_oversold and check_divergence(previous_low, recent_low, "regular_bull")
+
+// Detect regular bearish divergence  
+detect_regular_bearish() =>
+    if array.size(pivot_highs) < 2
+        false
+    else
+        recent_high = array.get(pivot_highs, array.size(pivot_highs) - 1)
+        previous_high = array.get(pivot_highs, array.size(pivot_highs) - 2)
+        
+        // Price makes higher high, RSI makes lower high
+        price_higher = recent_high.price_value > previous_high.price_value
+        rsi_lower = recent_high.rsi_value < previous_high.rsi_value
+        rsi_overbought = is_rsi_overbought(recent_high.rsi_value) or is_rsi_overbought(previous_high.rsi_value)
+        
+        price_higher and rsi_lower and rsi_overbought and check_divergence(previous_high, recent_high, "regular_bear")
+
+// Detect hidden bullish divergence
+detect_hidden_bullish() =>
+    if array.size(pivot_lows) < 2
+        false
+    else
+        recent_low = array.get(pivot_lows, array.size(pivot_lows) - 1)
+        previous_low = array.get(pivot_lows, array.size(pivot_lows) - 2)
+        
+        // Price makes higher low, RSI makes lower low
+        price_higher = recent_low.price_value > previous_low.price_value
+        rsi_lower = recent_low.rsi_value < previous_low.rsi_value
+        
+        price_higher and rsi_lower and check_divergence(previous_low, recent_low, "hidden_bull")
+
+// Detect hidden bearish divergence
+detect_hidden_bearish() =>
+    if array.size(pivot_highs) < 2
+        false
+    else
+        recent_high = array.get(pivot_highs, array.size(pivot_highs) - 1)
+        previous_high = array.get(pivot_highs, array.size(pivot_highs) - 2)
+        
+        // Price makes lower high, RSI makes higher high
+        price_lower = recent_high.price_value < previous_high.price_value
+        rsi_higher = recent_high.rsi_value > previous_high.rsi_value
+        
+        price_lower and rsi_higher and check_divergence(previous_high, recent_high, "hidden_bear")
+
+// Create divergence object
+create_divergence(point1, point2, div_type) =>
+    new_div = Divergence.new(point1, point2, div_type, true, bar_index)
+    array.push(detected_divergences, new_div)
+    
+    // Limit stored divergences
+    if array.size(detected_divergences) > 20
+        array.shift(detected_divergences)
+    
+    new_div
+
+// Draw divergence lines
+draw_divergence(divergence) =>
+    point1 = divergence.point1
+    point2 = divergence.point2
+    div_color = color.gray
+    line_style = line.style_solid
+    
+    // Set color based on divergence type
+    switch divergence.div_type
+        "regular_bull" => 
+            div_color := bull_div_color
+        "regular_bear" => 
+            div_color := bear_div_color
+        "hidden_bull" => 
+            div_color := hidden_bull_color
+            line_style := line.style_dashed
+        "hidden_bear" => 
+            div_color := hidden_bear_color
+            line_style := line.style_dashed
+    
+    // Draw price divergence line
+    if show_price_lines
+        price_line = line.new(point1.bar_index, point1.price_value, 
+                             point2.bar_index + line_extend, point2.price_value,
+                             color=div_color, width=2, style=line_style)
+        array.push(divergence_lines, price_line)
+
+// Draw divergence label
+draw_divergence_label(divergence) =>
+    if not show_labels
+        return
+        
+    point2 = divergence.point2
+    label_text = ""
+    label_color = color.gray
+    label_location = location.belowbar
+    
+    switch divergence.div_type
+        "regular_bull" =>
+            label_text := "Bull Div"
+            label_color := bull_div_color
+            label_location := location.belowbar
+        "regular_bear" =>
+            label_text := "Bear Div"
+            label_color := bear_div_color
+            label_location := location.abovebar
+        "hidden_bull" =>
+            label_text := "H Bull"
+            label_color := hidden_bull_color
+            label_location := location.belowbar
+        "hidden_bear" =>
+            label_text := "H Bear"
+            label_color := hidden_bear_color
+            label_location := location.abovebar
+    
+    div_label = label.new(point2.bar_index, point2.price_value, text=label_text,
+                         color=label_color, textcolor=color.white, size=size.small,
+                         style=divergence.point2.is_high ? label.style_label_down : label.style_label_up)
+    array.push(divergence_labels, div_label)
+    
+    // Cleanup old labels
+    if array.size(divergence_labels) > 10
+        old_label = array.shift(divergence_labels)
+        label.delete(old_label)
+
+// Clean old lines
+cleanup_lines() =>
+    if array.size(divergence_lines) > 20
+        for i = 0 to 5
+            if array.size(divergence_lines) > 0
+                old_line = array.shift(divergence_lines)
+                line.delete(old_line)
+
+// === MAIN LOGIC ===
+if barstate.isconfirmed
+    // Add new pivot points
+    if not na(pivot_high) and not na(rsi_pivot_high)
+        add_pivot_point(pivot_highs, bar_index - divergence_lookback, pivot_high, rsi_pivot_high, true)
+    
+    if not na(pivot_low) and not na(rsi_pivot_low)
+        add_pivot_point(pivot_lows, bar_index - divergence_lookback, pivot_low, rsi_pivot_low, false)
+    
+    // Check for divergences
+    new_divergence = false
+    
+    // Regular bullish divergence
+    if detect_regular_bullish()
+        recent_low = array.get(pivot_lows, array.size(pivot_lows) - 1)
+        previous_low = array.get(pivot_lows, array.size(pivot_lows) - 2)
+        divergence = create_divergence(previous_low, recent_low, "regular_bull")
+        draw_divergence(divergence)
+        draw_divergence_label(divergence)
+        new_divergence := true
+    
+    // Regular bearish divergence
+    if detect_regular_bearish()
+        recent_high = array.get(pivot_highs, array.size(pivot_highs) - 1)
+        previous_high = array.get(pivot_highs, array.size(pivot_highs) - 2)
+        divergence = create_divergence(previous_high, recent_high, "regular_bear")
+        draw_divergence(divergence)
+        draw_divergence_label(divergence)
+        new_divergence := true
+    
+    // Hidden divergences (if enabled)
+    if alert_hidden
+        if detect_hidden_bullish()
+            recent_low = array.get(pivot_lows, array.size(pivot_lows) - 1)
+            previous_low = array.get(pivot_lows, array.size(pivot_lows) - 2)
+            divergence = create_divergence(previous_low, recent_low, "hidden_bull")
+            draw_divergence(divergence)
+            draw_divergence_label(divergence)
+            new_divergence := true
+        
+        if detect_hidden_bearish()
+            recent_high = array.get(pivot_highs, array.size(pivot_highs) - 1)
+            previous_high = array.get(pivot_highs, array.size(pivot_highs) - 2)
+            divergence = create_divergence(previous_high, recent_high, "hidden_bear")
+            draw_divergence(divergence)
+            draw_divergence_label(divergence)
+            new_divergence := true
+    
+    // Cleanup old lines
+    cleanup_lines()
+
+// === PLOTTING ===
+// Plot RSI levels for reference (on a separate pane would be better)
+plotshape(is_rsi_overbought(rsi_value), style=shape.triangledown, location=location.abovebar,
+          color=color.new(color.red, 70), size=size.tiny, title="RSI Overbought")
+plotshape(is_rsi_oversold(rsi_value), style=shape.triangleup, location=location.belowbar,
+          color=color.new(color.green, 70), size=size.tiny, title="RSI Oversold")
+
+// === TABLE ===
+if barstate.islast
+    var table div_table = table.new(position.bottom_right, 2, 6, bgcolor=color.white, border_width=1)
+    
+    table.cell(div_table, 0, 0, "RSI Divergences", text_color=color.black, text_size=size.small)
+    table.cell(div_table, 1, 0, "Count", text_color=color.black, text_size=size.small)
+    
+    // Count divergence types
+    regular_bull = 0
+    regular_bear = 0
+    hidden_bull = 0
+    hidden_bear = 0
+    
+    for i = 0 to array.size(detected_divergences) - 1
+        div = array.get(detected_divergences, i)
+        if bar_index - div.detection_bar <= 100  // Only count recent divergences
+            switch div.div_type
+                "regular_bull" => regular_bull += 1
+                "regular_bear" => regular_bear += 1
+                "hidden_bull" => hidden_bull += 1
+                "hidden_bear" => hidden_bear += 1
+    
+    table.cell(div_table, 0, 1, "Bull Div", text_color=color.green, text_size=size.small)
+    table.cell(div_table, 1, 1, str.tostring(regular_bull), text_color=color.black, text_size=size.small)
+    
+    table.cell(div_table, 0, 2, "Bear Div", text_color=color.red, text_size=size.small)
+    table.cell(div_table, 1, 2, str.tostring(regular_bear), text_color=color.black, text_size=size.small)
+    
+    table.cell(div_table, 0, 3, "H Bull", text_color=color.blue, text_size=size.small)
+    table.cell(div_table, 1, 3, str.tostring(hidden_bull), text_color=color.black, text_size=size.small)
+    
+    table.cell(div_table, 0, 4, "H Bear", text_color=color.orange, text_size=size.small)
+    table.cell(div_table, 1, 4, str.tostring(hidden_bear), text_color=color.black, text_size=size.small)
+    
+    table.cell(div_table, 0, 5, "RSI", text_color=color.black, text_size=size.small)
+    table.cell(div_table, 1, 5, str.tostring(rsi_value, "#.#"), 
+              text_color=is_rsi_overbought(rsi_value) ? color.red : 
+                        is_rsi_oversold(rsi_value) ? color.green : color.black, text_size=size.small)
+
+// === ALERTS ===
+alertcondition(alert_bullish and detect_regular_bullish(), "Bullish Divergence", "RSI Bullish Divergence detected")
+alertcondition(alert_bearish and detect_regular_bearish(), "Bearish Divergence", "RSI Bearish Divergence detected")
+alertcondition(alert_hidden and detect_hidden_bullish(), "Hidden Bullish", "Hidden Bullish Divergence detected")
+alertcondition(alert_hidden and detect_hidden_bearish(), "Hidden Bearish", "Hidden Bearish Divergence detected")
