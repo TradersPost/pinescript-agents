@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Video Analysis Tool for Pine Script Visualizer
-Extracts and analyzes trading strategy/indicator information from YouTube videos
+Downloads YouTube videos and uses Whisper to extract transcripts for analysis
 """
 
 import os
@@ -10,15 +10,20 @@ import json
 from typing import Dict, List, Optional
 import subprocess
 import sys
+import tempfile
+import hashlib
 
 # Check and install required packages
-required_packages = ['youtube-transcript-api', 'pytube', 'openai']
+required_packages = ['yt-dlp', 'openai-whisper']
 
 def install_packages():
     """Install required packages if not present"""
     for package in required_packages:
         try:
-            __import__(package.replace('-', '_'))
+            if package == 'openai-whisper':
+                __import__('whisper')
+            else:
+                __import__(package.replace('-', '_'))
         except ImportError:
             print(f"Installing {package}...")
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
@@ -26,9 +31,7 @@ def install_packages():
 # Install packages if needed
 install_packages()
 
-from youtube_transcript_api import YouTubeTranscriptApi
-from pytube import YouTube
-import hashlib
+import whisper
 
 class VideoAnalyzer:
     """Analyzes YouTube videos for trading strategy content"""
@@ -79,28 +82,60 @@ class VideoAnalyzer:
         return None
     
     def get_video_metadata(self, url: str) -> Dict:
-        """Get video metadata"""
+        """Get video metadata using yt-dlp"""
         try:
-            yt = YouTube(url)
-            return {
-                'title': yt.title,
-                'author': yt.author,
-                'length': yt.length,
-                'description': yt.description[:500],  # First 500 chars
-                'publish_date': str(yt.publish_date),
-                'views': yt.views
-            }
+            result = subprocess.run(['yt-dlp', '--dump-json', '--no-download', url], 
+                                  capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                return {
+                    'title': data.get('title', 'Unknown'),
+                    'author': data.get('uploader', 'Unknown'),
+                    'length': data.get('duration', 0),
+                    'description': data.get('description', '')[:500],
+                    'publish_date': data.get('upload_date', 'Unknown'),
+                    'views': data.get('view_count', 0)
+                }
+            else:
+                return {'error': f'Failed to get metadata: {result.stderr}'}
         except Exception as e:
-            return {'error': str(e)}
+            return {'error': f'Failed to get metadata: {str(e)}'}
     
-    def get_transcript(self, video_id: str) -> Optional[str]:
-        """Get video transcript"""
+    def download_and_transcribe(self, url: str) -> Optional[str]:
+        """Download video audio and transcribe with Whisper"""
         try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            transcript = ' '.join([item['text'] for item in transcript_list])
-            return transcript
+            # Create temp directory for audio
+            with tempfile.TemporaryDirectory() as temp_dir:
+                audio_path = os.path.join(temp_dir, 'audio.mp3')
+                
+                print("📥 Downloading audio from video...")
+                # Download only audio using yt-dlp
+                result = subprocess.run([
+                    'yt-dlp', 
+                    '-x',  # Extract audio only
+                    '--audio-format', 'mp3',
+                    '--audio-quality', '0',  # Best quality
+                    '-o', audio_path,
+                    '--no-playlist',
+                    url
+                ], capture_output=True, text=True, timeout=120)
+                
+                if result.returncode != 0:
+                    print(f"Download failed: {result.stderr}")
+                    return None
+                
+                print("🎙️ Transcribing with Whisper (this may take a few minutes)...")
+                # Load Whisper model (base is a good balance of speed/accuracy)
+                model = whisper.load_model("base")
+                
+                # Transcribe the audio
+                result = model.transcribe(audio_path)
+                
+                # Return the transcript text
+                return result["text"]
+                
         except Exception as e:
-            print(f"Error getting transcript: {e}")
+            print(f"Error in download/transcribe: {e}")
             return None
     
     def extract_key_concepts(self, text: str) -> Dict:
@@ -265,11 +300,11 @@ class VideoAnalyzer:
         metadata = self.get_video_metadata(url)
         metadata['url'] = url
         
-        # Get transcript
-        transcript = self.get_transcript(video_id)
+        # Download and transcribe with Whisper
+        transcript = self.download_and_transcribe(url)
         if not transcript:
             return {
-                'error': 'Could not extract transcript',
+                'error': 'Could not transcribe video',
                 'metadata': metadata
             }
         
