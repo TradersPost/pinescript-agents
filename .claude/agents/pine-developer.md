@@ -168,6 +168,32 @@ takeProfit = strategy.position_avg_price *
      (1 + takeProfitPercent / 100)
 ```
 
+### CRITICAL: Plot Scope Restriction
+
+**NEVER use plot() inside local scopes** - This causes "Cannot use 'plot' in local scope" error
+
+```pinescript
+// ❌ WRONG - These will ALL fail:
+if condition
+    plot(value)  // ERROR!
+
+for i = 0 to 10
+    plot(close[i])  // ERROR!
+
+myFunc() =>
+    plot(close)  // ERROR!
+
+// ✅ CORRECT - Use these patterns instead:
+plot(condition ? value : na)  // Conditional plotting
+plot(value, color=condition ? color.blue : color.new(color.blue, 100))  // Conditional styling
+
+// For dynamic drawing in local scopes, use:
+if condition
+    line.new(...)  // OK
+    label.new(...)  // OK
+    box.new(...)   // OK
+```
+
 ### Best Practices
 
 1. **Avoid Repainting**

@@ -1,5 +1,47 @@
 # Pine Script v6 - Plots and Data Visualization
 
+## CRITICAL LIMITATION: Plot Cannot Be Used in Local Scopes
+
+⚠️ **IMPORTANT: The `plot()` function can ONLY be called at the global scope of a script.**
+
+### ❌ This Will Cause "Cannot use 'plot' in local scope" Error:
+```pinescript
+// WRONG - plot inside if statement
+if showMACD
+    plot(macdLine, "MACD", color=color.blue)  // ERROR!
+    
+// WRONG - plot inside function
+myFunction() =>
+    value = close * 2
+    plot(value)  // ERROR!
+    
+// WRONG - plot inside for loop
+for i = 0 to 10
+    plot(close[i])  // ERROR!
+```
+
+### ✅ CORRECT Solutions:
+```pinescript
+// SOLUTION 1: Use conditional value with ternary operator
+showMACD = input.bool(true, "Show MACD")
+macdLine = ta.macd(close, 12, 26, 9)[0]
+plot(showMACD ? macdLine : na, "MACD", color=color.blue)
+
+// SOLUTION 2: Use conditional color/style
+plot(macdLine, "MACD", color=showMACD ? color.blue : color.new(color.blue, 100))
+
+// SOLUTION 3: Pre-calculate in function, plot at global scope
+calcValue() =>
+    close * 2
+    
+myValue = calcValue()
+plot(myValue, "My Value")  // Plot OUTSIDE function
+
+// SOLUTION 4: For dynamic plots, use line.new() or label.new() instead
+if condition
+    line.new(bar_index, high, bar_index + 1, low, color=color.red)  // OK in local scope
+```
+
 ## Overview
 
 Plots are the primary way to visualize data in Pine Script. The `plot()` function displays numerical values as various visual styles on the chart, allowing traders to see indicator values, price levels, and custom calculations.

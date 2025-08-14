@@ -3,13 +3,96 @@
 This guide covers the most frequently encountered errors in Pine Script v6 development, their causes, and detailed solutions with examples.
 
 ## Table of Contents
-1. [Cannot Use Mutable Variable Errors](#cannot-use-mutable-variable-errors)
-2. [Syntax Errors](#syntax-errors)
-3. [Script Too Large Errors](#script-too-large-errors)
-4. [Na Value Handling Errors](#na-value-handling-errors)
-5. [Type Mismatch Errors](#type-mismatch-errors)
-6. [Series vs Simple Context Errors](#series-vs-simple-context-errors)
-7. [Lookahead and Repainting Errors](#lookahead-and-repainting-errors)
+1. [Cannot Use Plot in Local Scope](#cannot-use-plot-in-local-scope)
+2. [Cannot Use Mutable Variable Errors](#cannot-use-mutable-variable-errors)
+3. [Syntax Errors](#syntax-errors)
+4. [Script Too Large Errors](#script-too-large-errors)
+5. [Na Value Handling Errors](#na-value-handling-errors)
+6. [Type Mismatch Errors](#type-mismatch-errors)
+7. [Series vs Simple Context Errors](#series-vs-simple-context-errors)
+8. [Lookahead and Repainting Errors](#lookahead-and-repainting-errors)
+
+---
+
+## Cannot Use Plot in Local Scope
+
+### Error Message
+```
+Cannot use "plot" in local scope
+```
+
+### Cause
+The `plot()` function can ONLY be called at the global scope of a script. It cannot be used inside:
+- `if` statements
+- `for` loops
+- `while` loops
+- Functions
+- Switch statements
+- Any other local scope
+
+### Solution
+Use conditional values with ternary operators or use drawing objects (line, label, box) for dynamic visualization.
+
+### Examples
+
+**❌ Incorrect:**
+```pinescript
+//@version=6
+indicator("Plot Error", overlay=false)
+
+showMACD = input.bool(true, "Show MACD")
+[macdLine, signalLine, histogram] = ta.macd(close, 12, 26, 9)
+
+// ERROR: plot() inside if statement
+if showMACD
+    plot(macdLine, "MACD", color=color.blue)
+    plot(signalLine, "Signal", color=color.red)
+
+// ERROR: plot() inside function
+plotValue(val) =>
+    plot(val, "Value")  // Cannot plot inside function
+```
+
+**✅ Correct Solutions:**
+```pinescript
+//@version=6
+indicator("Plot Fixed", overlay=false)
+
+showMACD = input.bool(true, "Show MACD")
+[macdLine, signalLine, histogram] = ta.macd(close, 12, 26, 9)
+
+// Solution 1: Use ternary operator for conditional plotting
+plot(showMACD ? macdLine : na, "MACD", color=color.blue)
+plot(showMACD ? signalLine : na, "Signal", color=color.red)
+
+// Solution 2: Use conditional transparency
+plot(macdLine, "MACD", color=showMACD ? color.blue : color.new(color.blue, 100))
+
+// Solution 3: For dynamic drawing, use line/label/box in local scope
+if showMACD and barstate.islast
+    line.new(bar_index[10], macdLine[10], bar_index, macdLine, color=color.blue)
+    label.new(bar_index, macdLine, "MACD: " + str.tostring(macdLine), color=color.blue)
+
+// Solution 4: Calculate in function, plot at global scope
+calcCustomValue() =>
+    ta.sma(close, 20) * 1.1
+    
+customValue = calcCustomValue()
+plot(customValue, "Custom", color=color.green)  // Plot OUTSIDE function
+```
+
+### Alternative Drawing Methods for Local Scopes
+
+When you need dynamic drawing in local scopes, use these instead:
+
+```pinescript
+// These CAN be used in local scopes:
+if condition
+    line.new(x1, y1, x2, y2, color=color.red)
+    label.new(bar_index, high, "Text", color=color.blue)
+    box.new(left, top, right, bottom, bgcolor=color.green)
+    table.cell(myTable, 0, 0, "Value")
+```
 
 ---
 
