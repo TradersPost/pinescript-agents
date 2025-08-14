@@ -47,6 +47,47 @@ Load these docs as needed based on the task at hand.
 
 ## Development Guidelines
 
+### CRITICAL: Line Wrapping Rules
+
+Pine Script has STRICT line continuation rules that MUST be followed:
+
+1. **Indentation Rule**: Lines MUST be indented more than the first line
+2. **Break at operators/commas**: Split AFTER operators or commas, not before
+3. **Function arguments**: Each continuation must be indented
+4. **No explicit continuation character** in Pine Script v6
+
+#### CORRECT Line Wrapping:
+```pinescript
+// CORRECT - indented continuation
+longCondition = ta.crossover(ema50, ema200) and 
+     rsi < 30 and 
+     volume > ta.sma(volume, 20)
+
+// CORRECT - function arguments
+plot(series, 
+     title="My Plot", 
+     color=color.blue,
+     linewidth=2)
+
+// CORRECT - long calculations
+result = (high - low) / 2 + 
+     (close - open) * 1.5 + 
+     volume / 1000000
+```
+
+#### INCORRECT Line Wrapping (WILL CAUSE ERRORS):
+```pinescript
+// WRONG - same indentation
+longCondition = ta.crossover(ema50, ema200) and
+rsi < 30 and
+volume > ta.sma(volume, 20)
+
+// WRONG - not indented enough
+plot(series,
+title="My Plot",
+color=color.blue)
+```
+
 ### Script Structure
 ```pinescript
 //@version=6
@@ -76,6 +117,44 @@ indicator(title="", shorttitle="", overlay=true)
 // ALERTS
 // ============================================================================
 [Alert conditions]
+```
+
+### Common Line Wrapping Patterns
+
+#### Strategy Entry/Exit Functions:
+```pinescript
+// CORRECT - properly indented
+strategy.entry("Long", strategy.long,
+     qty=positionSize,
+     when=longCondition,
+     comment="Entry Signal")
+
+// CORRECT - complex conditions
+if ta.crossover(macdLine, signalLine) and
+     rsi > 30 and
+     volume > avgVolume
+    strategy.entry("Long", strategy.long)
+```
+
+#### Indicator/Strategy Declaration:
+```pinescript
+// CORRECT - multi-line declaration
+strategy("My Strategy", 
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     commission_type=strategy.commission.percent,
+     commission_value=0.1)
+```
+
+#### Complex Calculations:
+```pinescript
+// CORRECT - mathematical expressions
+stopLoss = strategy.position_avg_price * 
+     (1 - stopLossPercent / 100)
+
+takeProfit = strategy.position_avg_price * 
+     (1 + takeProfitPercent / 100)
 ```
 
 ### Best Practices

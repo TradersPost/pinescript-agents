@@ -1,5 +1,52 @@
 # Pine Script v6 Syntax Basics
 
+## CRITICAL: Line Wrapping Rules
+
+⚠️ **Pine Script has STRICT line continuation rules that MUST be followed:**
+
+### ✅ CORRECT Line Wrapping:
+```pine
+// Continuation lines MUST be indented MORE than the first line
+longCondition = ta.crossover(ema50, ema200) and 
+     rsi < 30 and 
+     volume > ta.sma(volume, 20)
+
+// Function arguments - each line indented
+plot(myValue,
+     title="My Plot",
+     color=color.blue,
+     linewidth=2)
+
+// Complex calculations
+result = (high - low) / 2 + 
+     (close - open) * 1.5 + 
+     volume / 1000000
+```
+
+### ❌ INCORRECT (Causes "end of line without line continuation" error):
+```pine
+// WRONG - not indented
+longCondition = ta.crossover(ema50, ema200) and
+rsi < 30 and
+volume > ta.sma(volume, 20)
+
+// WRONG - same indentation level
+plot(myValue,
+title="My Plot",
+color=color.blue)
+```
+
+### Key Rules:
+1. **Always indent** continuation lines MORE than the first line (use spaces or tabs consistently)
+2. **Break after** operators (and, or, +, -, *, /, etc.) or commas, NOT before
+3. **No backslash** or special continuation character needed in Pine Script v6
+4. **Consistent indentation** throughout the continuation
+5. **Common places** needing line wrapping:
+   - Long conditional statements
+   - Function calls with many arguments
+   - Complex mathematical expressions
+   - Strategy/indicator declarations
+
 ## Version Declaration
 Every Pine Script must start with a version declaration:
 ```pine
