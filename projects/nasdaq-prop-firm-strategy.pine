@@ -1,0 +1,643 @@
+// © sacredprofit
+// ============================================================================
+// NASDAQ PROP FIRM STRATEGY
+// A comprehensive trading strategy combining VWAP analysis with Lull indicators
+// ============================================================================
+
+//@version=6
+strategy("Nasdaq Prop Firm Strategy", overlay=true, initial_capital=100000, 
+         default_qty_type=strategy.percent_of_equity, default_qty_value=1, 
+         commission_type=strategy.commission.percent, commission_value=0.1)
+
+import sacredprofit/Toolbox/1
+
+// ============================================================================
+// INPUT SETTINGS
+// ============================================================================
+
+// VWAP Trend Settings
+vwapTrendEnabled = input.bool(true, 'Enable VWAP Trend', inline='VWAP', group='VWAP Trend')
+vwapTrendTimeframe = input.timeframe('15', 'Timeframe', inline='VWAP', group='VWAP Trend')
+
+// VWAP Anchor 1 Settings
+vwapAnchor1Enabled = input.bool(true, 'Enable', inline='ANCHOR 1', group='ANCHOR 1')
+vwapAnchor1Timeframe = input.timeframe('15', 'Timeframe', inline='ANCHOR 1', group='ANCHOR 1')
+vwapAnchor1Color = input.color(#FFFFFF, 'Color', inline='ANCHOR 1', group='ANCHOR 1')
+vwapAnchor1Mitigation = input.string('Extend', 'Mitigation', ['None', 'Stop', 'Extend'], group='ANCHOR 1', display=display.none)
+
+// VWAP Anchor 2 Settings
+vwapAnchor2Enabled = input.bool(true, 'Enable', inline='ANCHOR 2', group='ANCHOR 2')
+vwapAnchor2Timeframe = input.timeframe('D', 'Timeframe', inline='ANCHOR 2', group='ANCHOR 2')
+vwapAnchor2Color = input.color(#18dcff, 'Color', inline='ANCHOR 2', group='ANCHOR 2')
+vwapAnchor2Mitigation = input.string('Extend', 'Mitigation', ['None', 'Stop', 'Extend'], group='ANCHOR 2', display=display.none)
+
+// VWAP Anchor 3 Settings
+vwapAnchor3Enabled = input.bool(true, 'Enable', inline='ANCHOR 3', group='ANCHOR 3')
+vwapAnchor3Timeframe = input.timeframe('W', 'Timeframe', inline='ANCHOR 3', group='ANCHOR 3')
+vwapAnchor3Color = input.color(#fb408e, 'Color', inline='ANCHOR 3', group='ANCHOR 3')
+vwapAnchor3Mitigation = input.string('Extend', 'Mitigation', ['None', 'Stop', 'Extend'], group='ANCHOR 3', display=display.none)
+
+// Lull Indicator Settings
+lullAccuracy = input.int(10, 'Accuracy', minval=1, step=1, tooltip='Increasing the accuracy generates better signals, but less often.', group='Lull Setup')
+lullBuffer = input.int(10, 'Buffer', minval=0, tooltip='Reduce clusters of signals by setting a minimum distance between signals.', group='Lull Setup')
+lullShowText = input.bool(true, 'Add Text', group='Lull Setup')
+
+// Lull Signal Colors
+lullBuyColor = input.color(#16a085, 'Low Tide', inline='Signal', group='Lull Styling')
+lullSellColor = input.color(#c0392b, 'High Tide', inline='Signal', group='Lull Styling')
+lullDevColor = input.color(#e67e22, 'Developing', inline='Signal', group='Lull Styling')
+
+// ATR and Supertrend Settings
+atrPeriod = 10
+superTrendFactor = 3.0
+
+// ============================================================================
+// VWAP BUILDER TYPES AND METHODS
+// ============================================================================
+
+// VWAP Settings Type
+type settings
+    bool use = true
+    string tf = 'D'
+    color c = #18dcff
+    bool std = false
+    float mult = 2
+    string miti = 'Extend' // Stop | Extend
+    int miti_max = 500
+    bool draw = true
+
+// VWAP Data Type
+type vw
+    settings set
+    // VWAP values
+    bool tfc
+    float vwap
+    float upper
+    float lower
+    // Drawing properties
+    int end
+    line miti_ln
+    bool check = true
+    vw[] prev
+
+// Get VWAP from array at specified index
+method get(vw[] vwapArray, int idx) =>
+    if vwapArray.size() > 0 and vwapArray.size() > idx
+        vwapArray.get(idx)
+    else
+        vw.new()
+
+// Handle VWAP mitigation levels
+method mitigate(vw currentVwap) =>
+    for prevVwap in currentVwap.prev
+        if prevVwap.check
+            // Check if mitigation level was crossed
+            mitigationCrossed = not currentVwap.tfc and 
+                               ((high >= prevVwap.vwap and close[1] < prevVwap.vwap) or 
+                                (low <= prevVwap.vwap and close[1] > prevVwap.vwap))
+            
+            if mitigationCrossed
+                prevVwap.check := false
+                prevVwap.miti_ln.set_x2(time)
+                
+                // Extend mitigation line if needed
+                if currentVwap.set.miti == 'Extend' and currentVwap.set.draw
+                    extendedLine = prevVwap.miti_ln.copy()
+                    extendedLine.set_x1(time)
+                    extendedLine.set_x2(currentVwap.end)
+                    extendedLine.set_color(color.new(currentVwap.set.c, 50))
+            else
+                prevVwap.miti_ln.set_x2(currentVwap.end)
+    
+    // Clean up crossed mitigation levels
+    for [i, prevVwap] in currentVwap.prev
+        if not prevVwap.check
+            currentVwap.prev.remove(i)
+
+// Draw VWAP lines and labels
+method draw(vw currentVwap) =>
+    if currentVwap.set.use
+        // Track timeframe start
+        var int startTime = time
+        startTime := currentVwap.tfc ? time : startTime
+        
+        // Initialize drawing elements
+        var line endLine = currentVwap.set.draw ? 
+            line.new(na, na, na, na, xloc.bar_time, color=color.new(currentVwap.set.c, 70), 
+                    style=line.style_solid, width=5, force_overlay=true) : na
+        
+        var line extLine = currentVwap.set.draw ? 
+            line.new(na, na, na, na, xloc.bar_time, color=color.new(currentVwap.set.c, 30), 
+                    style=line.style_dashed, width=1, force_overlay=true) : na
+        
+        var label vwapLabel = currentVwap.set.draw ? 
+            label.new(na, na, '', xloc.bar_time, yloc.price, color(na), label.style_label_left, 
+                     currentVwap.set.c.hue(chart.fg_color, 60), size.small, force_overlay=true, 
+                     text_font_family=font.family_monospace) : na
+        
+        var previousVwaps = array.new<vw>()
+        var labelArray = array.new_label()
+        
+        // Copy end line on timeframe change
+        if currentVwap.tfc
+            endLine.copy()
+        
+        // Calculate session end time
+        currentVwap.end := startTime + (timeframe.in_seconds(currentVwap.set.tf) * 1000)
+        
+        // Update line positions
+        endLine.set_xy1(currentVwap.end, currentVwap.upper)
+        endLine.set_xy2(currentVwap.end, currentVwap.lower)
+        
+        extLine.set_xy1(time, currentVwap.vwap)
+        extLine.set_xy2(currentVwap.end, currentVwap.vwap)
+        
+        // Update VWAP label
+        vwapLabel.set_xy(currentVwap.end, currentVwap.vwap)
+        vwapLabel.set_text(str.format('{0} ({1})', str.tostring(currentVwap.vwap, format.mintick), currentVwap.set.tf))
+        
+        // Handle timeframe change
+        if currentVwap.tfc
+            // Store previous VWAP
+            previousVwap = currentVwap[1]
+            previousVwap.miti_ln := currentVwap.set.draw ? 
+                line.new(time, previousVwap.vwap, currentVwap.end, previousVwap.vwap, xloc.bar_time, 
+                        extend.none, currentVwap.set.c, line.style_dotted, 2, force_overlay=true) : na
+            
+            previousVwaps.unshift(previousVwap)
+            
+            // Limit array size
+            if previousVwaps.size() > 30
+                previousVwaps.remove(previousVwaps.size() - 1)
+            
+            // Add price labels
+            if currentVwap.set.draw
+                labelArray.push(label.new(currentVwap.end, previousVwap.vwap, 
+                    str.format('{0} ({1})', str.tostring(previousVwap.vwap, format.mintick), currentVwap.set.tf), 
+                    xloc.bar_time, yloc.price, color.new(chart.bg_color, 30), label.style_label_left, 
+                    currentVwap.set.c.hue(chart.fg_color, 60), size=12, force_overlay=true, 
+                    text_font_family=font.family_monospace))
+            
+            // Limit label count
+            if labelArray.size() > 3
+                labelArray.get(0).delete()
+                labelArray.remove(0)
+        
+        // Update previous VWAPs array
+        currentVwap.prev := previousVwaps
+        
+        // Handle mitigation if enabled
+        if currentVwap.set.miti != 'None'
+            currentVwap.mitigate()
+    
+    currentVwap
+
+// Create new VWAP instance
+method add(settings vwapSettings) =>
+    newVwap = vw.new()
+    
+    newVwap.tfc := timeframe.change(vwapSettings.tf)
+    vwapSettings.draw := vwapSettings.draw and vwapSettings.use
+    newVwap.set := vwapSettings
+    
+    // Calculate VWAP values
+    [vwapValue, upperBand, lowerBand] = ta.vwap(ohlc4, newVwap.tfc, vwapSettings.mult)
+    
+    newVwap.vwap := vwapValue
+    newVwap.upper := upperBand
+    newVwap.lower := lowerBand
+    newVwap.prev := array.new<vw>()
+    
+    // Draw if current timeframe is lower than VWAP timeframe
+    if timeframe.in_seconds() < timeframe.in_seconds(vwapSettings.tf)
+        newVwap.draw()
+    else
+        newVwap
+
+// Get previous VWAP at specified index
+method prev(vw currentVwap, int idx = 0) =>
+    if currentVwap.prev.size() > idx
+        currentVwap.prev.get(idx)
+    else
+        vw.new()
+
+
+
+
+
+// ============================================================================
+// VWAP TREND ANALYSIS
+// ============================================================================
+
+// Create main VWAP for trend analysis
+vwapTrend = settings.new(
+    vwapTrendEnabled,
+    vwapTrendTimeframe,
+    miti='None',
+    draw=false
+).add()
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+// Calculate time remaining in human-readable format
+time_left(current_ts, future_ts) =>
+    float diffSeconds = math.max((future_ts - current_ts) / 1000, 0)
+    
+    // Time unit definitions in seconds
+    unitSeconds = array.new_float(7)
+    array.set(unitSeconds, 0, 365 * 24 * 60 * 60)  // year
+    array.set(unitSeconds, 1, 30 * 24 * 60 * 60)   // month
+    array.set(unitSeconds, 2, 7 * 24 * 60 * 60)    // week
+    array.set(unitSeconds, 3, 24 * 60 * 60)        // day
+    array.set(unitSeconds, 4, 60 * 60)             // hour
+    array.set(unitSeconds, 5, 60)                  // minute
+    array.set(unitSeconds, 6, 1)                   // second
+    
+    // Time unit labels
+    unitLabels = array.new_string(7)
+    array.set(unitLabels, 0, 'y')
+    array.set(unitLabels, 1, 'm')
+    array.set(unitLabels, 2, 'w')
+    array.set(unitLabels, 3, 'd')
+    array.set(unitLabels, 4, 'h')
+    array.set(unitLabels, 5, 'm')
+    array.set(unitLabels, 6, 's')
+    
+    result = ''
+    hasStarted = false
+    
+    for i = 0 to array.size(unitSeconds) - 1
+        seconds = array.get(unitSeconds, i)
+        value = math.floor(diffSeconds / seconds)
+        diffSeconds := diffSeconds % seconds
+        
+        if value > 0 or hasStarted or i == array.size(unitSeconds) - 1
+            result := result + str.tostring(value) + array.get(unitLabels, i) + ' '
+            hasStarted := true
+    
+    str.trim(result)
+
+// Analyze VWAP trend direction and strength
+method vwap_trend(vw vwapData) =>
+    var int currentTrend = na
+    var int nextTrend = na
+    
+    // Get previous VWAP values
+    vwapPrevious0 = vwapData.prev(0).vwap
+    vwapPrevious1 = vwapData.prev(1).vwap
+    
+    // Determine current trend based on VWAP progression
+    currentTrend := switch
+        vwapPrevious0 > vwapPrevious1 and vwapData.vwap > vwapPrevious0 => 1  // Strong bullish
+        vwapPrevious0 < vwapPrevious1 and vwapData.vwap < vwapPrevious0 => -1 // Strong bearish
+        vwapPrevious0 > vwapPrevious1 and vwapData.vwap < vwapPrevious0 => 0  // Neutral/weakening
+        vwapPrevious0 < vwapPrevious1 and vwapData.vwap > vwapPrevious0 => 0  // Neutral/weakening
+        => currentTrend
+    
+    // Determine next potential trend based on price relative to VWAP
+    nextTrend := switch
+        vwapData.vwap > vwapPrevious0 and close > vwapData.vwap => 1  // Bullish momentum
+        vwapData.vwap < vwapPrevious0 and close < vwapData.vwap => -1 // Bearish momentum
+        vwapData.vwap > vwapPrevious0 and close < vwapData.vwap => 0  // Mixed signals
+        vwapData.vwap < vwapPrevious0 and close > vwapData.vwap => 0  // Mixed signals
+        => nextTrend
+    
+    // Convert trend to text
+    trendText = currentTrend == 1 ? 'Bullish' : currentTrend == -1 ? 'Bearish' : 'Neutral'
+    nextTrendText = nextTrend == 1 ? 'Bullish' : nextTrend == -1 ? 'Bearish' : 'Neutral'
+    
+    // Set colors based on trend
+    trendColor = currentTrend == 1 ? color.green : currentTrend == -1 ? color.red : color.orange
+    nextTrendColor = nextTrend == 1 ? color.green : nextTrend == -1 ? color.red : color.orange
+    
+    // Calculate session timing
+    sessionStart = vwapData.end - (timeframe.in_seconds(vwapData.set.tf) * 1000)
+    
+    // Calculate progress and distance metrics
+    progressBars = math.round((vwapData.end - time) / timeframe.in_seconds() / 1000)
+    
+    var int vwapBarsSinceChange = 0
+    vwapBarsSinceChange := vwapData.tfc ? 0 : vwapBarsSinceChange + 1
+    
+    // Calculate price distance from VWAP as percentage
+    priceDistance = math.round((close - vwapData.vwap) / close * 100, 2)
+    
+    [currentTrend, trendText, trendColor, nextTrend, nextTrendText, nextTrendColor, 
+     priceDistance, progressBars, vwapPrevious0, vwapPrevious1]
+
+
+// Get VWAP trend analysis
+[vwapTrendValue, vwapTrendText, vwapTrendColor, vwapNextTrend, vwapNextText, 
+ vwapNextColor, vwapPriceDistance, vwapProgressBars, vwapPrev0, vwapPrev1] = vwapTrend.vwap_trend()
+
+// Plot trend data
+plot(vwapTrendValue, 'VWAP Trend', vwapTrendColor, display=display.data_window)
+vwapPrevTopPlot = plot(math.max(vwapPrev0, vwapPrev1), 'VWAP Prev Top', vwapTrendColor)
+vwapPrevBottomPlot = plot(math.min(vwapPrev0, vwapPrev1), 'VWAP Prev Bottom', vwapTrendColor)
+
+// Fill area between previous VWAP levels
+fill(vwapPrevTopPlot, vwapPrevBottomPlot, color.new(vwapTrendColor, 70), 'VWAP Trend Zone')
+
+
+// ============================================================================
+// VWAP ANCHOR INITIALIZATION
+// ============================================================================
+
+// Create VWAP anchor instances
+vwapAnchor1 = settings.new(
+    use=vwapAnchor1Enabled,
+    tf=vwapAnchor1Timeframe,
+    c=vwapAnchor1Color,
+    miti=vwapAnchor1Mitigation
+).add()
+
+vwapAnchor2 = settings.new(
+    use=vwapAnchor2Enabled,
+    tf=vwapAnchor2Timeframe,
+    c=vwapAnchor2Color,
+    miti=vwapAnchor2Mitigation
+).add()
+
+vwapAnchor3 = settings.new(
+    use=vwapAnchor3Enabled,
+    tf=vwapAnchor3Timeframe,
+    c=vwapAnchor3Color,
+    miti=vwapAnchor3Mitigation
+).add()
+
+// Array of all VWAP anchors
+vwapAnchors = array.from(vwapAnchor1, vwapAnchor2, vwapAnchor3)
+
+
+// ============================================================================
+// VWAP ANCHOR PLOTS
+// ============================================================================
+
+// Plot VWAP Anchor 1
+plot(not vwapAnchor1.set.use or vwapAnchor1.tfc ? na : vwapAnchor1.vwap, 
+     'Anchor 1', vwapAnchor1.set.c, 2, plot.style_linebr, 
+     display=display.all - display.status_line)
+plot(not vwapAnchor1.set.use ? na : vwapAnchor1.prev().vwap, 
+     'Previous VWAP 1', na, display=display.data_window - display.status_line)
+
+// Plot VWAP Anchor 2
+plot(not vwapAnchor2.set.use or vwapAnchor2.tfc ? na : vwapAnchor2.vwap, 
+     'Anchor 2', vwapAnchor2.set.c, 2, plot.style_linebr, 
+     display=display.all - display.status_line)
+plot(not vwapAnchor2.set.use ? na : vwapAnchor2.prev().vwap, 
+     'Previous VWAP 2', na, display=display.data_window - display.status_line)
+
+// Plot VWAP Anchor 3
+plot(not vwapAnchor3.set.use or vwapAnchor3.tfc ? na : vwapAnchor3.vwap, 
+     'Anchor 3', vwapAnchor3.set.c, 2, plot.style_linebr, 
+     display=display.all - display.status_line)
+plot(not vwapAnchor3.set.use ? na : vwapAnchor3.prev().vwap, 
+     'Previous VWAP 3', na, display=display.data_window - display.status_line)
+
+
+// ============================================================================
+// LULL INDICATOR SYSTEM
+// ============================================================================
+
+// Lull indicator constants
+lullSource = close
+lullUpperLevel = 70
+lullLowerLevel = 30
+
+// Calculate RSI-style oscillator
+getOscillator(source, length) => 
+    upMove = ta.rma(math.max(ta.change(source), 0), length)
+    downMove = ta.rma(-math.min(ta.change(source), 0), length)
+    downMove == 0 ? 100 : upMove == 0 ? 0 : 100 - (100 / (1 + upMove / downMove))
+
+
+// ============================================================================
+// RVI (Relative Volatility Index) CALCULATION
+// ============================================================================
+
+// Calculate standard deviation
+standardDeviation = ta.stdev(lullSource, lullAccuracy)
+
+// Calculate upper and lower volatility components
+upperVolatility = ta.ema(ta.change(lullSource) <= 0 ? 0 : standardDeviation, lullAccuracy)
+lowerVolatility = ta.ema(ta.change(lullSource) > 0 ? 0 : standardDeviation, lullAccuracy)
+
+// Calculate RVI and its moving average
+rvi = upperVolatility / (upperVolatility + lowerVolatility) * 100
+rviMovingAverage = ta.sma(rvi, lullAccuracy)
+
+
+// ============================================================================
+// RSI (Relative Strength Index) CALCULATION
+// ============================================================================
+
+rsi = getOscillator(lullSource, lullAccuracy)
+rsiMovingAverage = ta.sma(rsi, lullAccuracy)
+
+// ============================================================================
+// MOMENTUM AND VOLUME CALCULATIONS
+// ============================================================================
+
+// Momentum indicators
+momentumFast = ta.sma(getOscillator(lullSource - lullSource[lullAccuracy], lullAccuracy), lullAccuracy)
+momentumSlow = ta.sma(getOscillator(lullSource - lullSource[lullAccuracy], lullAccuracy * 2), lullAccuracy * 2)
+
+// Volume tracking
+var cumulativeVolume = 0.
+cumulativeVolume += nz(volume)
+
+// On-Balance Volume calculation
+onBalanceVolume = ta.cum(math.sign(ta.change(lullSource)) * volume)
+obvMovingAverage = ta.sma(onBalanceVolume, 5)
+obvOscillator = getOscillator(obvMovingAverage, lullAccuracy)
+
+
+// ============================================================================
+// ATR AND CANDLESTICK ANALYSIS
+// ============================================================================
+
+// Average True Range calculation
+atr = ta.rma(ta.tr(true), lullAccuracy)
+atrOscillator = getOscillator(atr, lullAccuracy)
+
+// Candlestick components
+candleTop = math.max(open, close)
+candleBottom = math.min(open, close)
+candleLength = high - low
+candleBody = candleTop - candleBottom
+candleBodyAverage = ta.sma(candleBody, 14)
+candleMiddle = candleBottom + (candleBody / 2)
+
+// Wick calculations
+candleUpperWick = high - candleTop
+candleLowerWick = candleBottom - low
+
+// Candle direction
+candleTrend = switch
+    open < close => 1   // Bullish
+    open > close => -1  // Bearish
+    => 0               // Doji
+
+// Candle ratios as percentages
+candleBodyRatio = int(candleBody / candleLength * 100)
+candleUpperWickRatio = int(candleUpperWick / candleLength * 100)
+candleLowerWickRatio = int(candleLowerWick / candleLength * 100)
+
+// Supertrend calculation
+[supertrendValue, supertrendDirection] = ta.supertrend(superTrendFactor, atrPeriod)
+bullishTrend = supertrendDirection < 0
+
+// Support/Resistance zone type
+type resistanceZone
+    string zone = na
+    bool confirmed = false
+    float top = na
+    float bottom = na
+    int left = na
+    int right = na
+    box zoneBox = na
+    int touchCount = 0
+    bool active = true
+    line midLine = na
+
+// Initialize resistance zones array
+var resistanceZones = array.new<resistanceZone>(0)
+
+// Touch tracking variables
+candleTouchCount = 0
+isTouchingResistance = false
+isTouchingSupport = false
+newResistanceTouch = false
+newSupportTouch = false
+var int remainingResistance = 0
+var int remainingSupport = 0
+
+
+// ============================================================================
+// LULL SIGNAL CONDITIONS
+// ============================================================================
+
+// Momentum state tracking
+var bool momentumBullish = false
+
+// RVI conditions
+rviIsBullish = rvi <= lullLowerLevel and rvi[2] >= lullLowerLevel
+rviIsBearish = rvi >= lullUpperLevel and rvi[2] <= lullUpperLevel
+
+// RSI conditions - Pivot and Trend
+rsiIsBullishPivot = ta.crossover(rsi, lullLowerLevel) and rsiMovingAverage >= lullLowerLevel
+rsiIsBullishTrend = ta.crossover(rsi, lullLowerLevel) and rsiMovingAverage < lullLowerLevel
+rsiIsBullish = rsiIsBullishPivot or rsiIsBullishTrend
+
+rsiIsBearishPivot = ta.crossunder(rsi, lullUpperLevel) and rsiMovingAverage <= lullUpperLevel
+rsiIsBearishTrend = ta.crossunder(rsi, lullUpperLevel) and rsiMovingAverage > lullUpperLevel
+rsiIsBearish = ta.crossunder(rsi, lullUpperLevel) or ta.crossunder(rsiMovingAverage, lullUpperLevel)
+
+// Momentum conditions
+momentumIsBullish = ta.falling(momentumFast, 1)[1] and ta.rising(momentumFast, 1)
+momentumIsBearish = ta.rising(momentumFast, 1)[1] and ta.falling(momentumFast, 1)
+
+// Volume conditions
+volumeIsBullish = obvOscillator <= lullLowerLevel
+volumeIsBearish = obvOscillator >= lullUpperLevel
+
+// ATR conditions
+atrIsBullish = atrOscillator >= lullUpperLevel
+atrIsBearish = atrOscillator <= lullLowerLevel
+
+// Update momentum state
+momentumBullish := switch
+    momentumIsBullish => true
+    momentumIsBearish => false
+    => momentumBullish
+
+// Combined signal conditions
+bullishPivotSignal = rsiIsBullishPivot and momentumBullish and volumeIsBullish
+bearishPivotSignal = rsiIsBearishPivot and not momentumBullish and volumeIsBearish
+
+bullishTrendSignal = rsiIsBullishTrend and momentumBullish and volumeIsBullish
+bearishTrendSignal = rsiIsBearishTrend and not momentumBullish and volumeIsBearish
+
+// Calculate bars since last signals
+bullishPivotBarsSince = ta.barssince(bullishPivotSignal)[1]
+bearishPivotBarsSince = ta.barssince(bearishPivotSignal)[1]
+
+bullishTrendBarsSince = ta.barssince(bullishTrendSignal)[1]
+bearishTrendBarsSince = ta.barssince(bearishTrendSignal)[1]
+
+// ============================================================================
+// LULL SIGNAL GENERATION AND VISUALIZATION
+// ============================================================================
+
+// Signal state tracking
+varip bool isLowTide = false
+varip bool isHighTide = false
+
+// Generate signals with buffer check
+isLowTide := bullishTrendSignal and bullishTrendBarsSince > lullBuffer ? true : isLowTide
+isHighTide := bearishTrendSignal and bearishTrendBarsSince > lullBuffer ? true : isHighTide
+
+// Label variables
+lastLowTideLabel = label(na)
+lastHighTideLabel = label(na)
+
+// Create Low Tide labels
+if isLowTide
+    if lullShowText
+        lastLowTideLabel := label.new(bar_index, close, '◼︎\nL', 
+                                     yloc=yloc.belowbar, style=label.style_none, 
+                                     textcolor=lullDevColor, size=size.small, 
+                                     textalign=text.align_center, tooltip='Low Tide')
+    else
+        lastLowTideLabel := label.new(bar_index, close, '⏸', 
+                                     yloc=yloc.belowbar, style=label.style_none, 
+                                     textcolor=lullDevColor, size=size.normal, 
+                                     tooltip='Low Tide')
+
+// Create High Tide labels
+if isHighTide
+    if lullShowText
+        lastHighTideLabel := label.new(bar_index, close, 'H\n◼︎', 
+                                      yloc=yloc.abovebar, style=label.style_none, 
+                                      textcolor=lullDevColor, size=size.small, 
+                                      textalign=text.align_center, tooltip='High Tide')
+    else
+        lastHighTideLabel := label.new(bar_index, close, '⏸', 
+                                      yloc=yloc.abovebar, style=label.style_none, 
+                                      textcolor=lullDevColor, size=size.normal, 
+                                      tooltip='High Tide')
+
+// Confirm label colors when bar is confirmed
+if barstate.isconfirmed
+    lastLowTideLabel.set_textcolor(lullBuyColor)
+    lastHighTideLabel.set_textcolor(lullSellColor)
+
+// Reset signals on new bar
+if barstate.isnew
+    isLowTide := false
+    isHighTide := false
+
+// ============================================================================
+// SIGNAL STATISTICS AND ALERTS
+// ============================================================================
+
+// Count total signals
+totalBullishPivots = ta.cum(bullishPivotSignal and bullishPivotBarsSince > lullBuffer ? 1 : 0)
+totalBearishPivots = ta.cum(bearishPivotSignal and bearishPivotBarsSince > lullBuffer ? 1 : 0)
+
+totalBullishTrends = ta.cum(bullishTrendSignal and bullishTrendBarsSince > lullBuffer ? 1 : 0)
+totalBearishTrends = ta.cum(bearishTrendSignal and bearishTrendBarsSince > lullBuffer ? 1 : 0)
+
+// ============================================================================
+// ALERT CONDITIONS
+// ============================================================================
+
+// Alert conditions for Low and High Tide signals
+alertcondition(bullishTrendSignal and bullishTrendBarsSince > lullBuffer, 
+               'Low Tide Signal', 
+               'Low Tide detected - Potential bullish reversal')
+               
+alertcondition(bearishTrendSignal and bearishTrendBarsSince > lullBuffer, 
+               'High Tide Signal', 
+               'High Tide detected - Potential bearish reversal')

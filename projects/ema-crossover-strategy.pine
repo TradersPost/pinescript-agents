@@ -1,0 +1,259 @@
+//@version=6
+strategy("EMA Crossover Strategy",
+     shorttitle="EMA Cross",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     commission_type=strategy.commission.percent,
+     commission_value=0.1,
+     slippage=2)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// EMA Settings
+fastLength = input.int(9, "Fast EMA Length",
+     minval=1, maxval=200,
+     tooltip="Period for the fast-moving EMA. Shorter periods are more sensitive to price changes.",
+     group="EMA Settings")
+
+slowLength = input.int(21, "Slow EMA Length",
+     minval=1, maxval=500,
+     tooltip="Period for the slow-moving EMA. Longer periods provide smoother trend direction.",
+     group="EMA Settings")
+
+// Position Sizing
+positionSize = input.float(10.0, "Position Size (%)",
+     minval=0.1, maxval=100, step=0.1,
+     tooltip="Percentage of equity to risk per trade",
+     group="Risk Management")
+
+// Risk Management
+useStopLoss = input.bool(true, "Use Stop Loss",
+     tooltip="Enable stop loss protection",
+     group="Risk Management")
+
+stopLossPercent = input.float(2.0, "Stop Loss (%)",
+     minval=0.1, maxval=10.0, step=0.1,
+     tooltip="Stop loss percentage below entry price for long positions",
+     group="Risk Management")
+
+useTakeProfit = input.bool(true, "Use Take Profit",
+     tooltip="Enable take profit target",
+     group="Risk Management")
+
+takeProfitPercent = input.float(4.0, "Take Profit (%)",
+     minval=0.1, maxval=20.0, step=0.1,
+     tooltip="Take profit percentage above entry price for long positions",
+     group="Risk Management")
+
+// Visual Settings
+fastEmaColor = input.color(color.new(color.blue, 0), "Fast EMA Color",
+     tooltip="Color for the fast EMA line",
+     group="Visual Settings")
+
+slowEmaColor = input.color(color.new(color.red, 0), "Slow EMA Color",
+     tooltip="Color for the slow EMA line",
+     group="Visual Settings")
+
+showCrossSignals = input.bool(true, "Show Cross Signals",
+     tooltip="Display buy/sell signals on chart",
+     group="Visual Settings")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate EMAs
+fastEma = ta.ema(close, fastLength)
+slowEma = ta.ema(close, slowLength)
+
+// ============================================================================
+// CONDITIONS
+// ============================================================================
+
+// Entry Conditions
+longCondition = ta.crossover(fastEma, slowEma) and barstate.isconfirmed
+shortCondition = ta.crossunder(fastEma, slowEma) and barstate.isconfirmed
+
+// Calculate Stop Loss and Take Profit levels
+var float longStopLoss = na
+var float longTakeProfit = na
+var float shortStopLoss = na
+var float shortTakeProfit = na
+
+// Update levels on new positions
+if strategy.position_size > 0 and strategy.position_size[1] == 0  // New long position
+    longStopLoss := useStopLoss ? strategy.position_avg_price * (1 - stopLossPercent / 100) : na
+    longTakeProfit := useTakeProfit ? strategy.position_avg_price * (1 + takeProfitPercent / 100) : na
+
+if strategy.position_size < 0 and strategy.position_size[1] == 0  // New short position
+    shortStopLoss := useStopLoss ? strategy.position_avg_price * (1 + stopLossPercent / 100) : na
+    shortTakeProfit := useTakeProfit ? strategy.position_avg_price * (1 - takeProfitPercent / 100) : na
+
+// ============================================================================
+// STRATEGY LOGIC
+// ============================================================================
+
+// Entry Orders
+if longCondition
+    strategy.entry("Long", strategy.long,
+         qty=positionSize,
+         comment="EMA Cross Long")
+
+if shortCondition
+    strategy.entry("Short", strategy.short,
+         qty=positionSize,
+         comment="EMA Cross Short")
+
+// Exit Orders
+if strategy.position_size > 0
+    if useStopLoss and not na(longStopLoss)
+        strategy.exit("Long SL/TP", "Long",
+             stop=longStopLoss,
+             limit=longTakeProfit,
+             comment="Long Exit")
+    else if useTakeProfit and not na(longTakeProfit)
+        strategy.exit("Long TP", "Long",
+             limit=longTakeProfit,
+             comment="Long TP")
+
+if strategy.position_size < 0
+    if useStopLoss and not na(shortStopLoss)
+        strategy.exit("Short SL/TP", "Short",
+             stop=shortStopLoss,
+             limit=shortTakeProfit,
+             comment="Short Exit")
+    else if useTakeProfit and not na(shortTakeProfit)
+        strategy.exit("Short TP", "Short",
+             limit=shortTakeProfit,
+             comment="Short TP")
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+// Plot EMAs
+plot(fastEma, "Fast EMA",
+     color=fastEmaColor,
+     linewidth=2)
+
+plot(slowEma, "Slow EMA",
+     color=slowEmaColor,
+     linewidth=2)
+
+// Plot crossover signals
+plotshape(showCrossSignals and longCondition,
+     title="Buy Signal",
+     location=location.belowbar,
+     style=shape.labelup,
+     size=size.normal,
+     color=color.new(color.green, 0),
+     textcolor=color.white,
+     text="BUY")
+
+plotshape(showCrossSignals and shortCondition,
+     title="Sell Signal",
+     location=location.abovebar,
+     style=shape.labeldown,
+     size=size.normal,
+     color=color.new(color.red, 0),
+     textcolor=color.white,
+     text="SELL")
+
+// Plot position levels
+plot(strategy.position_size > 0 ? longStopLoss : na,
+     "Long Stop Loss",
+     color=color.new(color.red, 0),
+     style=plot.style_linebr,
+     linewidth=1)
+
+plot(strategy.position_size > 0 ? longTakeProfit : na,
+     "Long Take Profit",
+     color=color.new(color.green, 0),
+     style=plot.style_linebr,
+     linewidth=1)
+
+plot(strategy.position_size < 0 ? shortStopLoss : na,
+     "Short Stop Loss",
+     color=color.new(color.red, 0),
+     style=plot.style_linebr,
+     linewidth=1)
+
+plot(strategy.position_size < 0 ? shortTakeProfit : na,
+     "Short Take Profit",
+     color=color.new(color.green, 0),
+     style=plot.style_linebr,
+     linewidth=1)
+
+// Background color for trend direction
+bgcolor(fastEma > slowEma ? color.new(color.green, 95) : color.new(color.red, 95),
+     title="Trend Background")
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Alert conditions
+alertcondition(longCondition,
+     title="EMA Long Signal",
+     message="Fast EMA crossed above Slow EMA - Long signal generated")
+
+alertcondition(shortCondition,
+     title="EMA Short Signal",
+     message="Fast EMA crossed below Slow EMA - Short signal generated")
+
+// ============================================================================
+// STRATEGY PERFORMANCE TABLE
+// ============================================================================
+
+// Create performance table
+var table performanceTable = table.new(position.top_right, 2, 8, 
+     bgcolor=color.new(color.white, 85),
+     border_width=1)
+
+// Update table on last bar
+if barstate.islast
+    table.cell(performanceTable, 0, 0, "Metric", 
+         text_color=color.black, text_size=size.small)
+    table.cell(performanceTable, 1, 0, "Value", 
+         text_color=color.black, text_size=size.small)
+    
+    table.cell(performanceTable, 0, 1, "Net Profit", 
+         text_color=color.black, text_size=size.small)
+    table.cell(performanceTable, 1, 1, str.tostring(strategy.netprofit, "#.##"), 
+         text_color=strategy.netprofit >= 0 ? color.green : color.red, text_size=size.small)
+    
+    table.cell(performanceTable, 0, 2, "Total Trades", 
+         text_color=color.black, text_size=size.small)
+    table.cell(performanceTable, 1, 2, str.tostring(strategy.closedtrades), 
+         text_color=color.black, text_size=size.small)
+    
+    table.cell(performanceTable, 0, 3, "Win Rate", 
+         text_color=color.black, text_size=size.small)
+    winRate = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0
+    table.cell(performanceTable, 1, 3, str.tostring(winRate, "#.##") + "%", 
+         text_color=winRate >= 50 ? color.green : color.red, text_size=size.small)
+    
+    table.cell(performanceTable, 0, 4, "Profit Factor", 
+         text_color=color.black, text_size=size.small)
+    table.cell(performanceTable, 1, 4, str.tostring(strategy.grossprofit / math.max(strategy.grossloss, 1), "#.##"), 
+         text_color=color.black, text_size=size.small)
+    
+    table.cell(performanceTable, 0, 5, "Max Drawdown", 
+         text_color=color.black, text_size=size.small)
+    table.cell(performanceTable, 1, 5, str.tostring(strategy.max_drawdown, "#.##"), 
+         text_color=color.red, text_size=size.small)
+    
+    table.cell(performanceTable, 0, 6, "Avg Win", 
+         text_color=color.black, text_size=size.small)
+    avgWin = strategy.wintrades > 0 ? strategy.grossprofit / strategy.wintrades : 0
+    table.cell(performanceTable, 1, 6, str.tostring(avgWin, "#.##"), 
+         text_color=color.green, text_size=size.small)
+    
+    table.cell(performanceTable, 0, 7, "Avg Loss", 
+         text_color=color.black, text_size=size.small)
+    avgLoss = strategy.losstrades > 0 ? strategy.grossloss / strategy.losstrades : 0
+    table.cell(performanceTable, 1, 7, str.tostring(avgLoss, "#.##"), 
+         text_color=color.red, text_size=size.small)

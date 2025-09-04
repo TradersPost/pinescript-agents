@@ -1,0 +1,431 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © sacredprofit
+
+// Advanced Order Line with TradersPost Webhook Integration
+// Features:
+// - Horizontal price line with customizable styling
+// - Dynamic label showing price, ticks, dollars, points from close
+// - Price cross alerts with optional TradersPost webhook JSON payloads
+// - Full TradersPost webhook configuration for automated trading
+// - Risk management with stop loss and take profit settings
+
+//@version=6
+indicator("Advanced Order Line with TradersPost", 
+     shorttitle="Order Line TP",
+     overlay=true,
+     max_lines_count=1)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Line Configuration Group
+linePrice = input.price(50.0, "Line Price Level", 
+     tooltip="Set the price level where the horizontal line will be drawn",
+     group="Line Configuration",
+     confirm=true)
+
+// Line Style Group  
+lineColor = input.color(color.blue, "Line Color",
+     tooltip="Choose the color of the horizontal line",
+     group="Line Style")
+
+lineStyle = input.string("Dashed", "Line Style",
+     options=["Solid", "Dashed", "Dotted"],
+     tooltip="Select the line style pattern",
+     group="Line Style")
+
+lineWidth = input.int(2, "Line Width",
+     minval=1, maxval=10,
+     tooltip="Set the thickness of the line (1-10)",
+     group="Line Style")
+
+// Label Configuration Group
+showPrice = input.bool(true, "Show Price",
+     tooltip="Display the line price in the label",
+     group="Label Settings")
+
+showTicksFromClose = input.bool(false, "Show Ticks from Close",
+     tooltip="Display the distance in ticks from current close",
+     group="Label Settings")
+
+showDollarsFromClose = input.bool(false, "Show Dollars from Close",
+     tooltip="Display the dollar difference from current close",
+     group="Label Settings")
+
+showPointsFromClose = input.bool(false, "Show Points from Close",
+     tooltip="Display the point difference from current close",
+     group="Label Settings")
+
+labelOffset = input.int(30, "Label Offset",
+     tooltip="Bars offset from current bar. Positive = right, Negative = left",
+     group="Label Settings")
+
+labelTextColor = input.color(color.white, "Label Text Color",
+     tooltip="Color of the text inside the label",
+     group="Label Settings")
+
+// Alert Configuration Group
+alertType = input.string("Cross", "Alert Type",
+     options=["Cross", "Cross Above", "Cross Below"],
+     tooltip="Type of price cross to trigger alerts",
+     group="Alert Settings")
+
+alertFrequency = input.string("Once Per Bar Close", "Alert Frequency",
+     options=["All Updates", "Once Per Bar", "Once Per Bar Close", "Only Once Ever"],
+     tooltip="How often alerts can trigger. 'Only Once Ever' fires once per direction until opposite cross",
+     group="Alert Settings")
+
+// TradersPost Webhook Configuration
+enableWebhook = input.bool(true, "Enable TradersPost Webhook",
+     tooltip="Include TradersPost JSON in alert messages",
+     group="TradersPost Webhook")
+
+// Basic Webhook Settings
+webhookTicker = input.string("SPY", "Ticker Symbol",
+     tooltip="Leave empty to use chart symbol",
+     group="TradersPost Webhook")
+
+webhookActionBuy = input.string("buy", "Action on Cross Above",
+     options=["buy", "sell", "exit", "cancel", "add"],
+     tooltip="Action to send when price crosses above",
+     group="TradersPost Webhook")
+
+webhookActionSell = input.string("sell", "Action on Cross Below", 
+     options=["buy", "sell", "exit", "cancel", "add"],
+     tooltip="Action to send when price crosses below",
+     group="TradersPost Webhook")
+
+// Order Configuration
+orderType = input.string("", "Order Type",
+     options=["", "market", "limit", "stop", "stop_limit", "trailing_stop"],
+     tooltip="Type of order to place (blank to omit)",
+     group="TradersPost Order Settings")
+
+quantityType = input.string("", "Quantity Type",
+     options=["", "fixed_quantity", "dollar_amount", "risk_dollar_amount", "percent_of_equity", "percent_of_position"],
+     tooltip="How to calculate position size (blank to omit)",
+     group="TradersPost Order Settings")
+
+quantity = input.float(100, "Quantity/Amount",
+     minval=0,
+     tooltip="Quantity or amount based on quantity type",
+     group="TradersPost Order Settings")
+
+useLimitOffset = input.bool(true, "Use Limit Offset",
+     tooltip="Place limit order at offset from signal price",
+     group="TradersPost Order Settings")
+
+limitOffset = input.float(0.10, "Limit Offset ($)",
+     tooltip="Offset from signal price for limit orders",
+     group="TradersPost Order Settings")
+
+timeInForce = input.string("", "Time in Force",
+     options=["", "day", "gtc", "opg", "cls", "ioc", "fok"],
+     tooltip="Order duration (blank to omit)",
+     group="TradersPost Order Settings")
+
+extendedHours = input.bool(false, "Extended Hours",
+     tooltip="Allow trading in extended hours",
+     group="TradersPost Order Settings")
+
+// Risk Management
+useStopLoss = input.bool(true, "Use Stop Loss",
+     tooltip="Add stop loss to position",
+     group="TradersPost Risk Management")
+
+stopLossType = input.string("", "Stop Loss Type",
+     options=["", "stop", "stop_limit", "trailing_stop"],
+     tooltip="Stop loss order type (blank to omit)",
+     group="TradersPost Risk Management")
+
+stopLossValue = input.float(2.0, "Stop Loss Percent",
+     minval=0,
+     tooltip="Stop loss percentage from entry price",
+     group="TradersPost Risk Management")
+
+useTakeProfit = input.bool(true, "Use Take Profit",
+     tooltip="Add take profit to position",
+     group="TradersPost Risk Management")
+
+takeProfitValue = input.float(5.0, "Take Profit Percent",
+     minval=0,
+     tooltip="Take profit percentage from entry price",
+     group="TradersPost Risk Management")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Convert line style string to Pine Script line style
+getLineStyle() =>
+    switch lineStyle
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+// Convert alert frequency string to Pine Script constant
+getAlertFrequency() =>
+    switch alertFrequency
+        "All Updates" => alert.freq_all
+        "Once Per Bar" => alert.freq_once_per_bar
+        "Once Per Bar Close" => alert.freq_once_per_bar_close
+        "Only Once Ever" => alert.freq_once_per_bar_close  // Use bar close for the one-time alert
+        => alert.freq_once_per_bar_close
+
+// Check if using "Only Once Ever" mode
+alertOnlyOnce = alertFrequency == "Only Once Ever"
+
+// Variables to track if alerts have been fired (for "only once" option)
+var bool alertFiredAbove = false
+var bool alertFiredBelow = false
+
+// Build TradersPost webhook JSON message with proper formatting
+buildWebhookJSON(action) =>
+    // Use chart symbol if webhook ticker is empty
+    ticker = webhookTicker == "" ? syminfo.ticker : webhookTicker
+    
+    // Build formatted JSON with proper indentation
+    json = "{\n"
+    json := json + '  "ticker": "' + ticker + '",\n'
+    json := json + '  "action": "' + action + '",\n'
+    json := json + '  "price": ' + str.tostring(close, "#.##")
+    
+    // Add order type only if not blank
+    if orderType != ""
+        json := json + ',\n  "orderType": "' + orderType + '"'
+    
+    // Add quantity type only if not blank
+    if quantityType != ""
+        json := json + ',\n  "quantityType": "' + quantityType + '"'
+    
+    // Always add quantity
+    json := json + ',\n  "quantity": ' + str.tostring(quantity)
+    
+    // Add time in force only if not blank
+    if timeInForce != ""
+        json := json + ',\n  "timeInForce": "' + timeInForce + '"'
+    
+    // Add extended hours if enabled
+    if extendedHours
+        json := json + ',\n  "extendedHours": true'
+    
+    // Add limit price if using limit offset
+    if useLimitOffset and orderType != "market"
+        limitPrice = action == webhookActionBuy ? close - limitOffset : close + limitOffset
+        json := json + ',\n  "limitPrice": ' + str.tostring(limitPrice, "#.##")
+    
+    // Add stop loss if enabled and type is not blank
+    if useStopLoss and stopLossType != ""
+        json := json + ',\n  "stopLoss": {\n'
+        json := json + '    "type": "' + stopLossType + '",\n'
+        // Always use percent for the value
+        json := json + '    "percent": ' + str.tostring(stopLossValue)
+        // Add stopPrice for stop_limit orders
+        if stopLossType == "stop_limit"
+            slPrice = action == webhookActionBuy ? close * (1 - stopLossValue/100) : close * (1 + stopLossValue/100)
+            json := json + ',\n    "stopPrice": ' + str.tostring(slPrice, "#.##")
+            // Add limit price slightly below/above stop price
+            slLimitPrice = action == webhookActionBuy ? slPrice * 0.999 : slPrice * 1.001
+            json := json + ',\n    "limitPrice": ' + str.tostring(slLimitPrice, "#.##")
+        json := json + '\n  }'
+    
+    // Add take profit if enabled
+    if useTakeProfit
+        json := json + ',\n  "takeProfit": {\n'
+        json := json + '    "percent": ' + str.tostring(takeProfitValue)
+        json := json + '\n  }'
+    
+    // Add timestamp
+    json := json + ',\n  "time": "' + str.format_time(time, "yyyy-MM-dd'T'HH:mm:ssZ", syminfo.timezone) + '"'
+    
+    // Close JSON
+    json := json + '\n}'
+    json
+
+// Use line color for both line and label background
+labelBgColor = color.new(lineColor, 20)
+
+// ============================================================================
+// PRICE CALCULATION
+// ============================================================================
+
+// Use the manual input price
+finalLinePrice = linePrice
+
+// Track previous bar's close for cross detection
+float prevClose = na
+prevClose := close[1]
+
+// Cross detection conditions
+crossedAny = ta.cross(close, finalLinePrice)
+crossedAbove = ta.crossover(close, finalLinePrice)
+crossedBelow = ta.crossunder(close, finalLinePrice)
+
+// Reset alert fired flags when price crosses back
+if crossedBelow
+    alertFiredAbove := false
+if crossedAbove
+    alertFiredBelow := false
+
+// Log webhook status for debugging
+if barstate.islast and enableWebhook
+    log.info("TradersPost Webhook ENABLED - Ticker: {0}, Buy Action: {1}, Sell Action: {2}", webhookTicker == "" ? syminfo.ticker : webhookTicker, webhookActionBuy, webhookActionSell)
+
+// ============================================================================
+// LINE DRAWING
+// ============================================================================
+
+// Create or update horizontal line
+var line horizontalLine = na
+
+// Create line once when we have valid data
+if na(horizontalLine)
+    // Create line when we have a valid price
+    horizontalLine := line.new(
+         x1=bar_index - 500, 
+         y1=finalLinePrice,
+         x2=bar_index + 500, 
+         y2=finalLinePrice,
+         color=lineColor,
+         style=getLineStyle(),
+         width=lineWidth,
+         extend=extend.both)
+
+// Update line on every bar
+if not na(horizontalLine)
+    // Always update line coordinates to keep it visible and at current position
+    line.set_x1(horizontalLine, bar_index - 500)
+    line.set_x2(horizontalLine, bar_index + 500)
+    line.set_y1(horizontalLine, finalLinePrice)
+    line.set_y2(horizontalLine, finalLinePrice)
+    
+    // Update line properties
+    line.set_color(horizontalLine, lineColor)
+    line.set_style(horizontalLine, getLineStyle())
+    line.set_width(horizontalLine, lineWidth)
+
+// ============================================================================
+// LABEL DISPLAY
+// ============================================================================
+
+// Create or update price label
+var label priceLabel = na
+
+// Check if any label content is selected
+anyLabelContent = showPrice or showTicksFromClose or showDollarsFromClose or showPointsFromClose
+
+if anyLabelContent and barstate.islast
+    // Determine label position using the offset input
+    // User can input positive (right) or negative (left) offset values
+    labelX = bar_index + labelOffset
+    
+    // Determine text alignment based on offset direction
+    // If offset is positive (label to the right), align text left
+    // If offset is negative (label to the left), align text right  
+    labelAlign = labelOffset >= 0 ? text.align_left : text.align_right
+    
+    // Build label text based on selected options
+    labelText = ""
+    
+    // Add price if selected
+    if showPrice
+        labelText := str.format("${0,number,#.##}", finalLinePrice)
+    
+    // Calculate differences from close
+    priceDiff = finalLinePrice - close
+    ticksDiff = priceDiff / syminfo.mintick
+    
+    // Add ticks from close if selected
+    if showTicksFromClose
+        ticksText = str.format("{0,number,#} ticks", math.round(math.abs(ticksDiff)))
+        labelText := labelText == "" ? ticksText : labelText + "\n" + ticksText
+    
+    // Add dollars from close if selected
+    if showDollarsFromClose
+        dollarsText = str.format("${0,number,#.##}", math.abs(priceDiff))
+        labelText := labelText == "" ? dollarsText : labelText + "\n" + dollarsText
+    
+    // Add points from close if selected
+    if showPointsFromClose
+        pointsText = str.format("{0,number,#.##} pts", math.abs(priceDiff))
+        labelText := labelText == "" ? pointsText : labelText + "\n" + pointsText
+    
+    if na(priceLabel)
+        // Create new label if it doesn't exist
+        priceLabel := label.new(
+             x=labelX,
+             y=finalLinePrice,
+             text=labelText,
+             color=labelBgColor,
+             textcolor=labelTextColor,
+             style=label.style_label_center,
+             size=size.normal,
+             textalign=labelAlign)
+    else
+        // Update existing label properties
+        label.set_x(priceLabel, labelX)
+        label.set_y(priceLabel, finalLinePrice)
+        label.set_text(priceLabel, labelText)
+        label.set_color(priceLabel, labelBgColor)
+        label.set_textcolor(priceLabel, labelTextColor)
+        label.set_textalign(priceLabel, labelAlign)
+else if not anyLabelContent and not na(priceLabel)
+    // Delete label if no content selected
+    label.delete(priceLabel)
+    priceLabel := na
+
+// ============================================================================
+// PLOTS (for additional visual reference)
+// ============================================================================
+
+// Plot invisible line for easier selection in TradingView
+plot(finalLinePrice, 
+     title="Reference Level",
+     color=labelBgColor,
+     linewidth=1,
+     display=display.price_scale)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Build alert messages with optional webhook JSON
+crossAboveMessage = enableWebhook ? buildWebhookJSON(webhookActionBuy) : "Price crossed ABOVE the horizontal line at " + str.tostring(finalLinePrice)
+crossBelowMessage = enableWebhook ? buildWebhookJSON(webhookActionSell) : "Price crossed BELOW the horizontal line at " + str.tostring(finalLinePrice)
+
+// Determine which alerts to fire based on alert type
+shouldAlertAbove = (alertType == "Cross" and crossedAbove) or (alertType == "Cross Above" and crossedAbove)
+shouldAlertBelow = (alertType == "Cross" and crossedBelow) or (alertType == "Cross Below" and crossedBelow)
+
+// Check if we should fire the alert based on "only once" setting
+canFireAbove = not alertOnlyOnce or not alertFiredAbove
+canFireBelow = not alertOnlyOnce or not alertFiredBelow
+
+// Log if alerts are suppressed
+if alertOnlyOnce
+    if shouldAlertAbove and not canFireAbove
+        log.info("Alert suppressed (Cross Above) - Already fired once")
+    if shouldAlertBelow and not canFireBelow
+        log.info("Alert suppressed (Cross Below) - Already fired once")
+
+// Cross Above Alert with logging
+if shouldAlertAbove and canFireAbove
+    if enableWebhook
+        log.info("ALERT TRIGGERED - Cross Above\nJSON Payload:\n{0}", crossAboveMessage)
+    else
+        log.info("ALERT TRIGGERED - Cross Above: {0}", crossAboveMessage)
+    alert(crossAboveMessage, getAlertFrequency())
+    if alertOnlyOnce
+        alertFiredAbove := true
+
+// Cross Below Alert with logging
+if shouldAlertBelow and canFireBelow
+    if enableWebhook
+        log.info("ALERT TRIGGERED - Cross Below\nJSON Payload:\n{0}", crossBelowMessage)
+    else
+        log.info("ALERT TRIGGERED - Cross Below: {0}", crossBelowMessage)
+    alert(crossBelowMessage, getAlertFrequency())
+    if alertOnlyOnce
+        alertFiredBelow := true

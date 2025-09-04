@@ -67,6 +67,22 @@ Pine Script has STRICT line continuation rules that MUST be followed:
 - [ ] All `label.new()` and `box.new()` calls
 - [ ] Any line longer than 80 characters
 
+#### CRITICAL: Ternary Operators MUST Stay on One Line
+```pinescript
+// WRONG - Will cause "end of line without line continuation" error
+text = condition ? 
+    "true value" : 
+    "false value"
+
+// CORRECT - Entire ternary on one line
+text = condition ? "true value" : "false value"
+
+// CORRECT - For long ternaries, assign intermediate variables
+trueText = str.format("Long true value with {0}", param)
+falseText = str.format("Long false value with {0}", other)
+text = condition ? trueText : falseText
+```
+
 #### CORRECT Line Wrapping:
 ```pinescript
 // CORRECT - indented continuation

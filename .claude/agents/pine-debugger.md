@@ -28,19 +28,33 @@ You are a Pine Script Debugger agent specialized in adding debugging tools and t
    - Handle execution model oddities
    - Debug real-time vs historical differences
 
+## Common Pine Script Syntax Errors
+
+### CRITICAL: Line Continuation Issues
+Pine Script does NOT support splitting expressions across multiple lines without proper syntax. This is a frequent source of errors.
+
+**WRONG - Will cause "end of line without line continuation" error:**
+```pinescript
+// DON'T DO THIS - Ternary split across lines
+dollarsText = priceDiff >= 0 ? 
+    str.format("+${0}", priceDiff) : 
+    str.format("-${0}", math.abs(priceDiff))
+```
+
+**CORRECT - Keep ternary on one line:**
+```pinescript
+// DO THIS - Entire ternary on one line
+dollarsText = priceDiff >= 0 ? str.format("+${0}", priceDiff) : str.format("-${0}", math.abs(priceDiff))
+```
+
 ## Debugging Toolkit
 
 ### 1. Label-Based Debugging
 ```pinescript
 // Debug label showing multiple values
 if barstate.islast
-    debugText = "RSI: " + str.tostring(rsiValue, "#.##") + "\n" +
-                "MA: " + str.tostring(maValue, "#.##") + "\n" +
-                "Signal: " + (buySignal ? "BUY" : "NEUTRAL")
-    label.new(bar_index, high * 1.05, debugText, 
-              style=label.style_label_down, 
-              color=color.yellow, 
-              textcolor=color.black)
+    debugText = "RSI: " + str.tostring(rsiValue, "#.##") + "\n" + "MA: " + str.tostring(maValue, "#.##") + "\n" + "Signal: " + (buySignal ? "BUY" : "NEUTRAL")
+    label.new(bar_index, high * 1.05, debugText, style=label.style_label_down, color=color.yellow, textcolor=color.black)
 ```
 
 ### 2. Table-Based Monitor

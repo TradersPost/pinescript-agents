@@ -1,0 +1,94 @@
+{
+  "success": true,
+  "summary": "\n\ud83d\udcf9 VIDEO ANALYSIS COMPLETE\n========================\n\n**Source**: BEST MACD Trading Strategy [86% Win Rate]\n**Author**: TradingLab\n\n**Detected Type**: STRATEGY\n**Complexity**: 8/10\n**Strategy Style**: momentum\n\n**Main Components Identified**:\n\u2022 Indicators: macd, moving average, momentum, sma, ema\n\u2022 Patterns: convergence, trend, cross\n\u2022 Timeframes: \n\n**Trading Logic**:\n\u2022 Entry: 3 conditions found\n\u2022 Exit: 2 conditions found\n\u2022 Risk: 0 rules found\n\n**Feasibility**: PARTIAL\n\nIs this understanding correct? Reply 'yes' to proceed or describe what needs adjustment.\n",
+  "detailed_spec": {
+    "video_source": {
+      "title": "BEST MACD Trading Strategy [86% Win Rate]",
+      "author": "TradingLab",
+      "url": "https://www.youtube.com/watch?v=rf_EQvubKlk&t=10s&pp=ygUbc2ltcGxlIHRyYWRpbmd2aWV3IHN0cmF0ZWd5"
+    },
+    "detected_type": "strategy",
+    "main_indicators": [
+      "macd",
+      "moving average",
+      "momentum",
+      "sma",
+      "ema"
+    ],
+    "trading_patterns": [
+      "convergence",
+      "trend",
+      "cross"
+    ],
+    "strategy_type": "momentum",
+    "timeframes": [],
+    "implementation_requirements": {
+      "entry_logic": [
+        "finally, line, which basically represents",
+        "cross above line, won't enter",
+        "enter short trade lines crossing"
+      ],
+      "exit_logic": [
+        "below moving average",
+        "almost price break through"
+      ],
+      "risk_rules": [],
+      "market_filter": [
+        "Essentially, this indicator uses moving averages to find trends in the market, and it's pretty damn good at it too",
+        "The MACD indicator is insanely good at finding trends and markets"
+      ]
+    },
+    "specific_parameters": [],
+    "complexity_score": 8,
+    "feasibility": {
+      "overall": "partial",
+      "notes": [],
+      "limitations": []
+    }
+  },
+  "raw_concepts": {
+    "indicators": [
+      "macd",
+      "moving average",
+      "ema",
+      "sma",
+      "momentum"
+    ],
+    "patterns": [
+      "trend",
+      "divergence",
+      "convergence",
+      "cross"
+    ],
+    "strategies": [
+      "momentum"
+    ],
+    "conditions": [
+      "stop loss",
+      "signal"
+    ],
+    "timeframes": [],
+    "specific_values": []
+  },
+  "raw_components": {
+    "entry_conditions": [
+      "And finally, we have the zero line, which basically represents the center of the MACD indicator",
+      "If they cross and it's above the zero line, you won't want to enter the trade",
+      "You only want to enter a short trade if the lines are crossing downward and it's above the zero line"
+    ],
+    "exit_conditions": [
+      "Now what I like to do is set a stop loss below the 200 day moving average",
+      "So the 200 day almost acts as a wall that the price has to break through to hit the stop loss"
+    ],
+    "risk_management": [],
+    "indicators_used": [],
+    "timeframe": null,
+    "market_conditions": [
+      "Essentially, this indicator uses moving averages to find trends in the market, and it's pretty damn good at it too",
+      "The MACD indicator is insanely good at finding trends and markets",
+      "How you can tell if a chart is about to have an upward trend is by looking for a cross upwards between the MACD line and the signal line"
+    ]
+  },
+  "transcript_length": 7519,
+  "analysis_id": "4c0e6145"
+}
