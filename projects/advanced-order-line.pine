@@ -1,15 +1,115 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © sacredprofit
 
-// Advanced Order Line with TradersPost Webhook Integration
-// Features:
-// - Horizontal price line with customizable styling
-// - Dynamic label showing price, ticks, dollars, points from close
-// - Price cross alerts with optional TradersPost webhook JSON payloads
-// - Full TradersPost webhook configuration for automated trading
-// - Risk management with stop loss and take profit settings
-
 //@version=6
+
+// ============================================================================
+// ADVANCED ORDER LINE WITH TRADERSPOST - PROFESSIONAL TRADING AUTOMATION TOOL
+// ============================================================================
+// 
+// OVERVIEW
+// ========
+// Transform your trading strategy with this powerful horizontal price line 
+// indicator that goes far beyond basic visualization. This comprehensive tool 
+// combines precise price level monitoring with full TradersPost webhook 
+// integration for seamless automated trading execution.
+//
+// KEY FEATURES
+// ============
+// • Smart Price Line - Customizable horizontal line with professional styling 
+//   options (solid, dashed, dotted) and adjustable width
+// • Dynamic Information Display - Real-time labels showing price, distance in 
+//   ticks, dollars, and points from current close
+// • Advanced Alert System - Multiple alert types (Cross, Cross Above, Cross Below) 
+//   with flexible frequency settings including "Only Once Ever" option
+// • TradersPost Integration - Complete webhook JSON payload generation for 
+//   automated order execution with all API properties
+// • Risk Management - Built-in stop loss and take profit configuration with 
+//   multiple order types (market, limit, stop, stop_limit, trailing_stop)
+// • Professional Design - Color-coordinated labels with customizable positioning 
+//   and transparency settings
+// • Debug Logging - Comprehensive logging system for monitoring alert triggers 
+//   and webhook status
+//
+// USE CASES
+// =========
+// • Breakout Trading - Set lines at resistance levels and automatically enter 
+//   positions on breaks
+// • Support/Resistance - Monitor key levels with instant alerts when price 
+//   approaches or crosses
+// • Position Management - Automatically place stop losses and take profits 
+//   based on your line placement
+// • Risk Control - Consistent position sizing and risk management through 
+//   TradersPost integration
+// • Multi-Asset Monitoring - Use across stocks, forex, crypto, and futures 
+//   with symbol-specific settings
+//
+// HOW TO USE
+// ==========
+// 1. Add to Chart - Apply the indicator to your desired timeframe
+// 2. Set Price Level - Input your target price level (default: $50.00)
+// 3. Customize Display - Choose line color, style, and width preferences
+// 4. Configure Labels - Select which information to display (price, ticks, 
+//    dollars, points)
+// 5. Setup Alerts - Choose alert type and frequency based on your trading style
+// 6. TradersPost Setup - Enable webhook integration and configure your trading 
+//    parameters
+// 7. Risk Management - Set stop loss and take profit percentages
+// 8. Create Alerts - Set up TradingView alerts to trigger your automated trades
+//
+// TRADERSPOST WEBHOOK FEATURES
+// ============================
+// • Order Types - Market, limit, stop, stop_limit, and trailing stop orders
+// • Position Sizing - Fixed quantity, dollar amount, risk-based, or percentage 
+//   of equity
+// • Risk Management - Automatic stop loss and take profit placement with 
+//   configurable percentages
+// • Extended Hours - Support for pre-market and after-hours trading
+// • Time in Force - Day, GTC, IOC, FOK order duration options
+// • Clean JSON - Properly formatted payloads ready for TradersPost API
+// • Symbol Override - Use chart symbol or specify custom ticker
+// • Real-time Data - Includes current price and timestamp in payloads
+//
+// ALERT FREQUENCY OPTIONS
+// ======================
+// • All Updates - Trigger on every tick (use with caution)
+// • Once Per Bar - Trigger once per bar formation
+// • Once Per Bar Close - Trigger only on bar close (recommended)
+// • Only Once Ever - Fire once per direction until opposite cross occurs
+//
+// PRO TIPS
+// ========
+// • Use positive label offset values to place labels right of price action
+// • Use negative offset values to place labels left of price action
+// • Enable "Only Once Ever" frequency to prevent duplicate alerts
+// • Test webhook functionality with paper trading before live implementation
+// • Monitor Pine Script logs (log.info) for debugging webhook payloads
+// • Combine multiple instances for complex multi-level strategies
+//
+// IMPORTANT NOTES
+// ==============
+// • Alerts trigger on real-time data only (backtesting shows historical crosses)
+// • Requires active TradersPost subscription for webhook automation
+// • All webhook fields are optional - leave blank to omit from JSON
+// • Stop loss type must be: "stop", "stop_limit", or "trailing_stop"
+// • Take profit uses percentage from entry price
+// • Extended hours trading depends on broker support
+//
+// VERSION HISTORY
+// ==============
+// v1.0 - Initial release with basic line and alerts
+// v2.0 - Added TradersPost webhook integration
+// v3.0 - Enhanced with all TradersPost API properties
+// v4.0 - Added "Only Once Ever" alert option and improved UI
+//
+// DISCLAIMER
+// ==========
+// Trading involves substantial risk of loss. Past performance does not 
+// guarantee future results. This indicator is for educational purposes only 
+// and does not constitute financial advice. Always conduct thorough testing 
+// and risk assessment before automated trading.
+//
+// ============================================================================
 indicator("Advanced Order Line with TradersPost", 
      shorttitle="Order Line TP",
      overlay=true,

@@ -1,0 +1,458 @@
+//@version=6
+indicator(title="Trading Discipline Checklist [TradersPost]", 
+     shorttitle="Discipline", 
+     overlay=true)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Position Settings
+positionGroup = "📍 Position & Size"
+tablePosition = input.string(defval="bottom_right", 
+     title="Position", 
+     options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"],
+     tooltip="Where to position the checklist on the chart",
+     group=positionGroup)
+     
+tableSize = input.string(defval="normal", 
+     title="Size", 
+     options=["tiny", "small", "normal", "large", "huge"],
+     tooltip="Size of the checklist display",
+     group=positionGroup)
+
+// Checklist Categories
+preTradeGroup = "📋 Pre-Trade Checklist"
+enablePreTrade = input.bool(defval=true, title="Enable Pre-Trade Checklist", group=preTradeGroup)
+checkMarketTrend = input.bool(defval=true, title="Market Trend Analysis", group=preTradeGroup)
+checkSupRes = input.bool(defval=true, title="Support/Resistance Levels", group=preTradeGroup)
+checkVolume = input.bool(defval=true, title="Volume Analysis", group=preTradeGroup)
+checkRiskReward = input.bool(defval=true, title="Risk/Reward Ratio", group=preTradeGroup)
+checkPositionSize = input.bool(defval=true, title="Position Size Calculated", group=preTradeGroup)
+
+duringTradeGroup = "⚡ During Trade Management"
+enableDuringTrade = input.bool(defval=true, title="Enable Trade Management", group=duringTradeGroup)
+checkStopLoss = input.bool(defval=true, title="Stop Loss Set", group=duringTradeGroup)
+checkTakeProfit = input.bool(defval=true, title="Take Profit Levels", group=duringTradeGroup)
+checkTrailingStop = input.bool(defval=false, title="Trailing Stop Active", group=duringTradeGroup)
+checkEmotions = input.bool(defval=true, title="Emotional Control", group=duringTradeGroup)
+
+postTradeGroup = "📝 Post-Trade Review"
+enablePostTrade = input.bool(defval=true, title="Enable Post-Trade Review", group=postTradeGroup)
+checkJournal = input.bool(defval=true, title="Trade Journaled", group=postTradeGroup)
+checkLessons = input.bool(defval=true, title="Lessons Learned", group=postTradeGroup)
+checkStrategy = input.bool(defval=true, title="Strategy Adherence", group=postTradeGroup)
+
+// Alert Settings
+alertGroup = "🔔 Alerts & Reminders"
+enableAlerts = input.bool(defval=false, title="Enable Discipline Alerts", group=alertGroup)
+alertOnNewBar = input.bool(defval=true, title="Alert on New Bar (Reminder)", group=alertGroup)
+
+// Timer Settings
+timerGroup = "⏰ Inactivity Timer"
+enableTimer = input.bool(defval=true, title="Enable Inactivity Reminder", group=timerGroup)
+timeoutValue = input.int(defval=15, title="Time Before Reminder", minval=1, maxval=1440, group=timerGroup)
+timeoutUnit = input.string(defval="Minutes", title="Time Unit", options=["Seconds", "Minutes", "Hours"], group=timerGroup)
+reminderMessage = input.string(defval="⚠️ CHECK YOUR TRADING CHECKLIST", title="Reminder Message", group=timerGroup)
+
+// ============================================================================
+// THEME-AWARE COLOR CALCULATIONS
+// ============================================================================
+
+// Theme-aware colors using chart.fg_color and chart.bg_color
+textColor = chart.fg_color
+backgroundColor = chart.bg_color
+mutedTextColor = color.new(chart.fg_color, 40)
+borderColor = color.new(chart.fg_color, 70)
+subtleBgColor = color.new(chart.bg_color, 20)
+
+// Semantic colors that work on both themes
+goodColor = color.new(color.green, 20)
+badColor = color.new(color.red, 20)
+warningColor = color.new(color.orange, 20)
+neutralColor = color.new(chart.fg_color, 80)
+
+// Status indicator colors
+statusGood = color.green
+statusBad = color.red
+statusWarning = color.orange
+statusNeutral = mutedTextColor
+
+// ============================================================================
+// TIMER LOGIC
+// ============================================================================
+
+// Convert timeout to milliseconds based on unit
+getTimeoutMs() =>
+    switch timeoutUnit
+        "Seconds" => timeoutValue * 1000
+        "Minutes" => timeoutValue * 60000
+        "Hours" => timeoutValue * 3600000
+        => timeoutValue * 60000  // Default to minutes
+
+timeoutMs = getTimeoutMs()
+
+// Store the start time when indicator loads (any settings change restarts this)
+var float startTime = timenow
+
+// Calculate time since indicator started (or settings changed)
+timeSinceInteractionMs = timenow - startTime
+
+// Determine if reminder should be shown
+showReminder = enableTimer and timeSinceInteractionMs > timeoutMs
+
+// ============================================================================
+// CHECKLIST LOGIC
+// ============================================================================
+
+// Calculate completion percentages
+preTradeItems = array.new<bool>()
+if enablePreTrade
+    if checkMarketTrend
+        array.push(preTradeItems, true)
+    if checkSupRes
+        array.push(preTradeItems, true)
+    if checkVolume
+        array.push(preTradeItems, true)
+    if checkRiskReward
+        array.push(preTradeItems, true)
+    if checkPositionSize
+        array.push(preTradeItems, true)
+
+duringTradeItems = array.new<bool>()
+if enableDuringTrade
+    if checkStopLoss
+        array.push(duringTradeItems, true)
+    if checkTakeProfit
+        array.push(duringTradeItems, true)
+    if checkTrailingStop
+        array.push(duringTradeItems, true)
+    if checkEmotions
+        array.push(duringTradeItems, true)
+
+postTradeItems = array.new<bool>()
+if enablePostTrade
+    if checkJournal
+        array.push(postTradeItems, true)
+    if checkLessons
+        array.push(postTradeItems, true)
+    if checkStrategy
+        array.push(postTradeItems, true)
+
+preTradeScore = enablePreTrade ? array.size(preTradeItems) : 0
+duringTradeScore = enableDuringTrade ? array.size(duringTradeItems) : 0
+postTradeScore = enablePostTrade ? array.size(postTradeItems) : 0
+
+maxPreTrade = enablePreTrade ? 5 : 0
+maxDuringTrade = enableDuringTrade ? 4 : 0
+maxPostTrade = enablePostTrade ? 3 : 0
+
+totalScore = preTradeScore + duringTradeScore + postTradeScore
+maxScore = maxPreTrade + maxDuringTrade + maxPostTrade
+overallCompletion = maxScore > 0 ? math.round(totalScore * 100 / maxScore) : 0
+
+// ============================================================================
+// VISUAL DISPLAY FUNCTIONS
+// ============================================================================
+
+// Function to get completion color
+getCompletionColor(percentage) =>
+    switch
+        percentage >= 80 => statusGood
+        percentage >= 60 => statusWarning
+        => statusBad
+
+// Function to get position from string
+getTablePosition(pos) =>
+    switch pos
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+
+// Function to get table size
+getTableSize(size) =>
+    switch size
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+        "huge" => size.huge
+        => size.normal
+
+// ============================================================================
+// DETAILED PANEL DISPLAY
+// ============================================================================
+
+if barstate.islast
+    var totalRows = 1 // Header
+    totalRows += enableTimer ? 1 : 0 // Timer row if enabled
+    totalRows += showReminder ? 1 : 0 // Reminder row if needed
+    totalRows += enablePreTrade ? 6 : 0 // Pre-trade header + 5 items
+    totalRows += enableDuringTrade ? 5 : 0 // During trade header + 4 items  
+    totalRows += enablePostTrade ? 4 : 0 // Post trade header + 3 items
+    
+    detailTable = table.new(position=getTablePosition(tablePosition), 
+         columns=2, 
+         rows=totalRows, 
+         bgcolor=subtleBgColor,
+         border_width=1, 
+         border_color=borderColor)
+    
+    var currentRow = 0
+    
+    // Show countdown timer if enabled
+    if enableTimer
+        timeRemainingMs = math.max(0, timeoutMs - timeSinceInteractionMs)
+        timeRemainingSeconds = timeRemainingMs / 1000
+        
+        // Determine warning threshold (20% of timeout or 30 seconds, whichever is larger)
+        warningThreshold = math.max(30, timeoutMs * 0.2 / 1000)
+        
+        timerBgColor = showReminder ? color.new(color.orange, 0) : (timeRemainingSeconds < warningThreshold ? color.new(color.orange, 70) : color.new(chart.fg_color, 90))
+        timerTextColor = showReminder ? color.white : chart.fg_color
+        
+        // Show reminder when timeout is exceeded
+        if showReminder
+            // Format elapsed time based on duration
+            elapsedDisplay = ""
+            if timeSinceInteractionMs >= 3600000  // Over 1 hour
+                elapsedHours = math.floor(timeSinceInteractionMs / 3600000)
+                elapsedMinutes = math.floor((timeSinceInteractionMs % 3600000) / 60000)
+                elapsedDisplay := str.format("{0}h {1}m inactive", elapsedHours, elapsedMinutes)
+            else if timeSinceInteractionMs >= 60000  // Over 1 minute
+                elapsedMinutes = math.floor(timeSinceInteractionMs / 60000)
+                elapsedDisplay := str.format("{0} min inactive", elapsedMinutes)
+            else
+                elapsedSeconds = math.floor(timeSinceInteractionMs / 1000)
+                elapsedDisplay := str.format("{0} sec inactive", elapsedSeconds)
+                
+            table.cell(detailTable, 0, currentRow, reminderMessage, 
+                 text_color=color.white, 
+                 text_size=getTableSize(tableSize),
+                 bgcolor=color.new(color.orange, 0),
+                 text_halign=text.align_center)
+            table.cell(detailTable, 1, currentRow, elapsedDisplay, 
+                 text_color=color.white, 
+                 text_size=size.small,
+                 bgcolor=color.new(color.orange, 0),
+                 text_halign=text.align_center)
+        else
+            // Show countdown timer with appropriate format
+            timerText = ""
+            if timeRemainingSeconds >= 3600  // Over 1 hour
+                hours = math.floor(timeRemainingSeconds / 3600)
+                minutes = math.floor((timeRemainingSeconds % 3600) / 60)
+                seconds = math.floor(timeRemainingSeconds % 60)
+                timerText := str.format("⏱️ {0}:{1}:{2}", hours, minutes < 10 ? "0" + str.tostring(minutes) : str.tostring(minutes), seconds < 10 ? "0" + str.tostring(seconds) : str.tostring(seconds))
+            else if timeRemainingSeconds >= 60  // Over 1 minute
+                minutes = math.floor(timeRemainingSeconds / 60)
+                seconds = math.floor(timeRemainingSeconds % 60)
+                timerText := str.format("⏱️ {0}:{1}", minutes, seconds < 10 ? "0" + str.tostring(seconds) : str.tostring(seconds))
+            else  // Less than 1 minute
+                seconds = math.floor(timeRemainingSeconds)
+                timerText := str.format("⏱️ 0:{0}", seconds < 10 ? "0" + str.tostring(seconds) : str.tostring(seconds))
+            
+            table.cell(detailTable, 0, currentRow, timerText, 
+                 text_color=timerTextColor, 
+                 text_size=size.small,
+                 bgcolor=timerBgColor,
+                 text_halign=text.align_left)
+            table.cell(detailTable, 1, currentRow, "Next check reminder", 
+                 text_color=mutedTextColor, 
+                 text_size=size.tiny,
+                 bgcolor=timerBgColor,
+                 text_halign=text.align_right)
+        currentRow += 1
+    
+    // Show reminder if timer expired (kept for backwards compatibility but now integrated above)
+    else if showReminder
+        // Format elapsed time based on duration
+        elapsedDisplay = ""
+        if timeSinceInteractionMs >= 3600000  // Over 1 hour
+            elapsedHours = math.floor(timeSinceInteractionMs / 3600000)
+            elapsedMinutes = math.floor((timeSinceInteractionMs % 3600000) / 60000)
+            elapsedDisplay := str.format("{0}h {1}m inactive", elapsedHours, elapsedMinutes)
+        else if timeSinceInteractionMs >= 60000  // Over 1 minute
+            elapsedMinutes = math.floor(timeSinceInteractionMs / 60000)
+            elapsedDisplay := str.format("{0} min inactive", elapsedMinutes)
+        else
+            elapsedSeconds = math.floor(timeSinceInteractionMs / 1000)
+            elapsedDisplay := str.format("{0} sec inactive", elapsedSeconds)
+            
+        table.cell(detailTable, 0, currentRow, reminderMessage, 
+             text_color=color.white, 
+             text_size=getTableSize(tableSize),
+             bgcolor=color.new(color.orange, 0),
+             text_halign=text.align_center)
+        table.cell(detailTable, 1, currentRow, elapsedDisplay, 
+             text_color=color.white, 
+             text_size=size.small,
+             bgcolor=color.new(color.orange, 0),
+             text_halign=text.align_center)
+        currentRow += 1
+    
+    // Header
+    table.cell(detailTable, 0, currentRow, "Trading Discipline Checklist", 
+         text_color=textColor, 
+         text_size=getTableSize(tableSize),
+         bgcolor=color.new(chart.bg_color, 10))
+    table.cell(detailTable, 1, currentRow, str.tostring(overallCompletion) + "% Complete", 
+         text_color=getCompletionColor(overallCompletion), 
+         text_size=getTableSize(tableSize),
+         bgcolor=color.new(chart.bg_color, 10))
+    currentRow += 1
+    
+    // Pre-Trade Section
+    if enablePreTrade
+        table.cell(detailTable, 0, currentRow, "📋 PRE-TRADE", 
+             text_color=textColor, 
+             text_size=getTableSize(tableSize),
+             bgcolor=color.new(goodColor, 90))
+        preTradePercent = maxPreTrade > 0 ? math.round(preTradeScore * 100 / maxPreTrade) : 0
+        table.cell(detailTable, 1, currentRow, str.tostring(preTradePercent) + "%", 
+             text_color=getCompletionColor(preTradePercent), 
+             text_size=getTableSize(tableSize),
+             bgcolor=color.new(goodColor, 90))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Market Trend Analysis", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkMarketTrend ? "✓" : "✗", 
+             text_color=checkMarketTrend ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Support/Resistance", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkSupRes ? "✓" : "✗", 
+             text_color=checkSupRes ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Volume Analysis", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkVolume ? "✓" : "✗", 
+             text_color=checkVolume ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Risk/Reward Ratio", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkRiskReward ? "✓" : "✗", 
+             text_color=checkRiskReward ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Position Size", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkPositionSize ? "✓" : "✗", 
+             text_color=checkPositionSize ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+    
+    // During Trade Section
+    if enableDuringTrade
+        table.cell(detailTable, 0, currentRow, "⚡ DURING TRADE", 
+             text_color=textColor, 
+             text_size=getTableSize(tableSize),
+             bgcolor=color.new(warningColor, 90))
+        duringTradePercent = maxDuringTrade > 0 ? math.round(duringTradeScore * 100 / maxDuringTrade) : 0
+        table.cell(detailTable, 1, currentRow, str.tostring(duringTradePercent) + "%", 
+             text_color=getCompletionColor(duringTradePercent), 
+             text_size=getTableSize(tableSize),
+             bgcolor=color.new(warningColor, 90))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Stop Loss Set", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkStopLoss ? "✓" : "✗", 
+             text_color=checkStopLoss ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Take Profit Levels", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkTakeProfit ? "✓" : "✗", 
+             text_color=checkTakeProfit ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Trailing Stop", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkTrailingStop ? "✓" : "✗", 
+             text_color=checkTrailingStop ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Emotional Control", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkEmotions ? "✓" : "✗", 
+             text_color=checkEmotions ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+    
+    // Post Trade Section
+    if enablePostTrade
+        table.cell(detailTable, 0, currentRow, "📝 POST-TRADE", 
+             text_color=textColor, 
+             text_size=getTableSize(tableSize),
+             bgcolor=color.new(neutralColor, 90))
+        postTradePercent = maxPostTrade > 0 ? math.round(postTradeScore * 100 / maxPostTrade) : 0
+        table.cell(detailTable, 1, currentRow, str.tostring(postTradePercent) + "%", 
+             text_color=getCompletionColor(postTradePercent), 
+             text_size=getTableSize(tableSize),
+             bgcolor=color.new(neutralColor, 90))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Trade Journaled", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkJournal ? "✓" : "✗", 
+             text_color=checkJournal ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Lessons Learned", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkLessons ? "✓" : "✗", 
+             text_color=checkLessons ? statusGood : statusBad, text_size=getTableSize(tableSize))
+        currentRow += 1
+        
+        table.cell(detailTable, 0, currentRow, "Strategy Adherence", 
+             text_color=mutedTextColor, text_size=getTableSize(tableSize))
+        table.cell(detailTable, 1, currentRow, checkStrategy ? "✓" : "✗", 
+             text_color=checkStrategy ? statusGood : statusBad, text_size=getTableSize(tableSize))
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Track if we just crossed the timeout threshold
+var bool reminderAlerted = false
+if showReminder and not reminderAlerted
+    if enableAlerts
+        // Format alert message based on elapsed time
+        elapsedMsg = ""
+        if timeSinceInteractionMs >= 3600000  // Over 1 hour
+            elapsedHours = math.floor(timeSinceInteractionMs / 3600000)
+            elapsedMinutes = math.floor((timeSinceInteractionMs % 3600000) / 60000)
+            elapsedMsg := str.format("{0}h {1}m since last update", elapsedHours, elapsedMinutes)
+        else if timeSinceInteractionMs >= 60000  // Over 1 minute
+            elapsedMinutes = math.floor(timeSinceInteractionMs / 60000)
+            elapsedMsg := str.format("{0} minutes since last update", elapsedMinutes)
+        else
+            elapsedSeconds = math.floor(timeSinceInteractionMs / 1000)
+            elapsedMsg := str.format("{0} seconds since last update", elapsedSeconds)
+            
+        alert(reminderMessage + " - " + elapsedMsg, alert.freq_once_per_bar)
+    reminderAlerted := true
+else if not showReminder
+    reminderAlerted := false
+
+if enableAlerts and alertOnNewBar and barstate.isconfirmed
+    if overallCompletion < 60
+        alert("Trading Discipline Alert: Only " + str.tostring(overallCompletion) + "% complete. Review your checklist!", 
+             alert.freq_once_per_bar)
+
+// ============================================================================
+// PLOTS (for series data if needed)
+// ============================================================================
+
+// Plot the completion percentage as a series for potential use in other indicators
+plot(overallCompletion, title="Discipline Score", display=display.data_window, color=color.new(textColor, 80))

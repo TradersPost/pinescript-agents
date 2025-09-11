@@ -81,10 +81,15 @@ indicator(title="Professional Indicator Name - Clear Description v1.0",
 
 ## Documentation Templates
 
-### 1. Indicator Documentation
+### IMPORTANT: Script Description Location
+**Pine Script descriptions should be written as comments at the top of the .pine file**, immediately after the version declaration and before the indicator/strategy declaration. This is the standard practice for TradingView scripts.
+
+### 1. Indicator Documentation (Place at TOP of .pine file)
 ```pinescript
+//@version=6
+
 // ============================================================================
-// DOCUMENTATION
+// DOCUMENTATION - THIS GOES AT THE TOP OF YOUR PINE SCRIPT FILE
 // ============================================================================
 // 
 // INDICATOR OVERVIEW
@@ -132,6 +137,8 @@ indicator(title="Professional Indicator Name - Clear Description v1.0",
 // v1.2 (2024-03-01): Performance optimizations
 //
 // ============================================================================
+
+indicator("Your Indicator Name", shorttitle="Short Name", overlay=true)
 ```
 
 ### 2. Strategy Documentation
