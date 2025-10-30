@@ -1,0 +1,150 @@
+//@version=6
+indicator("ATR Forward Box",
+     shorttitle="ATR FBox",
+     overlay=true,
+     max_boxes_count=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+atrPeriod = input.int(14, "ATR Period",
+     minval=1,
+     tooltip="Period for calculating Average True Range",
+     group="ATR Settings")
+
+boxOffset = input.int(5, "Box Offset (Bars Ahead)",
+     minval=1,
+     maxval=500,
+     tooltip="Number of bars ahead to draw the box",
+     group="Box Settings")
+
+centerPrice = input.string("Current Close", "Box Center Price",
+     options=["Current Close", "High", "Low", "HL2"],
+     tooltip="Price level to center the box around",
+     group="Box Settings")
+
+boxColor = input.color(color.new(color.gray, 50), "Box Color",
+     tooltip="Color and transparency of the ATR box",
+     group="Box Settings")
+
+borderWidth = input.int(1, "Border Width",
+     minval=1,
+     maxval=4,
+     tooltip="Width of the box border",
+     group="Box Settings")
+
+showATRText = input.bool(true, "Show ATR Text",
+     tooltip="Display ATR value inside the box",
+     group="Display")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate ATR
+atrValue = ta.atr(atrPeriod)
+
+// Determine center price based on user selection
+getCenterPrice() =>
+    switch centerPrice
+        "Current Close" => close
+        "High" => high
+        "Low" => low
+        "HL2" => hl2
+        => close
+
+centerLevel = getCenterPrice()
+
+// Calculate box boundaries
+boxTop = centerLevel + atrValue
+boxBottom = centerLevel - atrValue
+
+// Define box coordinates
+// Box starts 5 bars ahead and extends 1 bar width
+boxLeft = bar_index + boxOffset
+boxRight = bar_index + boxOffset + 1
+
+// ============================================================================
+// BOX MANAGEMENT
+// ============================================================================
+
+// Use var to persist the box object across bars
+var box currentBox = na
+
+// Delete previous box if it exists
+if not na(currentBox)
+    box.delete(currentBox)
+
+// Prepare box text
+boxText = showATRText ? "ATR: " + str.tostring(atrValue, format.mintick) : ""
+
+// Create new box on every bar
+// This ensures the box "moves forward" with the current bar
+currentBox := box.new(left=boxLeft,
+     top=boxTop,
+     right=boxRight,
+     bottom=boxBottom,
+     border_color=boxColor,
+     bgcolor=boxColor,
+     border_width=borderWidth,
+     extend=extend.none,
+     xloc=xloc.bar_index,
+     text=boxText,
+     text_halign=text.align_center,
+     text_valign=text.align_center,
+     text_color=color.white,
+     text_size=size.normal)
+
+// ============================================================================
+// PLOTS (for reference)
+// ============================================================================
+
+// Plot ATR value for reference in data window
+plot(atrValue, "ATR Value", color=color.new(color.gray, 100), display=display.data_window)
+
+// Plot center line (invisible but shows in data window)
+plot(centerLevel, "Center Price", color=color.new(color.blue, 100), display=display.data_window)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Alert when ATR expands significantly
+atrChange = ta.change(atrValue)
+atrExpanding = atrChange > 0 and atrChange > atrValue * 0.1
+
+alertcondition(atrExpanding,
+     title="ATR Expanding",
+     message="ATR has expanded by more than 10%")
+
+// ============================================================================
+// TABLE - Display Current Stats
+// ============================================================================
+
+var table statsTable = table.new(position.top_right, 2, 3,
+     border_width=1,
+     border_color=color.gray,
+     frame_color=color.gray,
+     frame_width=1)
+
+if barstate.islast
+    table.cell(statsTable, 0, 0, "ATR Period",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 70))
+    table.cell(statsTable, 1, 0, str.tostring(atrPeriod),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    table.cell(statsTable, 0, 1, "Current ATR",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 70))
+    table.cell(statsTable, 1, 1, str.tostring(atrValue, format.mintick),
+         text_color=color.yellow,
+         bgcolor=color.new(color.gray, 80))
+
+    table.cell(statsTable, 0, 2, "Box Offset",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 70))
+    table.cell(statsTable, 1, 2, str.tostring(boxOffset) + " bars",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))

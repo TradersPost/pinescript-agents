@@ -1,0 +1,260 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradersPostInc
+
+//@contributor sacredprofit
+
+//@version=6
+indicator('[TradersPost] Confluence of Alerts v2', 'CoA', overlay = true)
+
+// SETTINGS {
+type condition
+    bool when_use
+    float when
+    string evnt
+    color c
+
+    bool val_use
+    float val
+    bool src_use
+    float src
+
+    int bs
+    bool oncl
+
+
+tt_val = 'When using a Rising or Falling event, Value acts as the number of bars over which the event is occuring.'
+
+x_cona_name = input.string('', 'Name', tooltip = 'The name added here will show up in the indicator\'s arguments on the chart, as well as in drop down menus to be able to easily identify it when adding this indicator multiple times to your charts.')
+
+x_cond_1 = condition.new(
+ input.bool(true, 'When', inline = 'COND', group = 'Condition 1', display = display.none),
+ input.source(close, '', inline = 'COND', group = 'Condition 1', display = display.none),
+ input.string('Crossing', '', ['Crossing', 'Crossing Up', 'Crossing Down', 'Greater Than', 'Less Than', 'Rising', 'Falling'], tooltip = tt_val, inline = 'COND', group = 'Condition 1', display = display.none),
+ input.color(color.green, '', inline = 'COND', group = 'Condition 1'),
+ input.bool(false, 'Value', inline = 'TYPE', group = 'Condition 1'),
+ input.float(0, '', inline = 'TYPE', group = 'Condition 1', display = display.none),
+ input.bool(false, 'Source', inline = 'TYPE', group = 'Condition 1'),
+ input.source(close, '', inline = 'TYPE', group = 'Condition 1', display = display.none),
+ input.int(0, 'Bars Since', tooltip = 'Number of bars since this condition was true.', group = 'Condition 1'),
+ input.bool(true, 'on Bar Close', group = 'Condition 1', display = display.none)
+ )
+
+x_cond_2 = condition.new(
+ input.bool(false, 'When', inline = 'COND', group = 'Condition 2', display = display.none),
+ input.source(close, '', inline = 'COND', group = 'Condition 2', display = display.none),
+ input.string('Crossing', '', ['Crossing', 'Crossing Up', 'Crossing Down', 'Greater Than', 'Less Than', 'Rising', 'Falling'], tooltip = tt_val, inline = 'COND', group = 'Condition 2', display = display.none),
+ input.color(color.orange, '', inline = 'COND', group = 'Condition 2'),
+ input.bool(false, 'Value', inline = 'TYPE', group = 'Condition 2'),
+ input.float(0, '', inline = 'TYPE', group = 'Condition 2', display = display.none),
+ input.bool(false, 'Source', inline = 'TYPE', group = 'Condition 2'),
+ input.source(close, '', inline = 'TYPE', group = 'Condition 2', display = display.none),
+ input.int(0, 'Bars Since', tooltip = 'Number of bars since this condition was true.', group = 'Condition 2'),
+ input.bool(true, 'on Bar Close', group = 'Condition 2', display = display.none)
+ )
+
+x_cond_3 = condition.new(
+ input.bool(false, 'When', inline = 'COND', group = 'Condition 3', display = display.none),
+ input.source(close, '', inline = 'COND', group = 'Condition 3', display = display.none),
+ input.string('Crossing', '', ['Crossing', 'Crossing Up', 'Crossing Down', 'Greater Than', 'Less Than', 'Rising', 'Falling'], tooltip = tt_val, inline = 'COND', group = 'Condition 3', display = display.none),
+ input.color(color.fuchsia, '', inline = 'COND', group = 'Condition 3'),
+ input.bool(false, 'Value', inline = 'TYPE', group = 'Condition 3'),
+ input.float(0, '', inline = 'TYPE', group = 'Condition 3', display = display.none),
+ input.bool(false, 'Source', inline = 'TYPE', group = 'Condition 3'),
+ input.source(close, '', inline = 'TYPE', group = 'Condition 3', display = display.none),
+ input.int(0, 'Bars Since', tooltip = 'Number of bars since this condition was true.', group = 'Condition 3'),
+ input.bool(true, 'on Bar Close', group = 'Condition 3', display = display.none)
+ )
+
+x_cond_4 = condition.new(
+ input.bool(false, 'When', inline = 'COND', group = 'Condition 4', display = display.none),
+ input.source(close, '', inline = 'COND', group = 'Condition 4', display = display.none),
+ input.string('Crossing', '', ['Crossing', 'Crossing Up', 'Crossing Down', 'Greater Than', 'Less Than', 'Rising', 'Falling'], tooltip = tt_val, inline = 'COND', group = 'Condition 4', display = display.none),
+ input.color(color.yellow, '', inline = 'COND', group = 'Condition 4'),
+ input.bool(false, 'Value', inline = 'TYPE', group = 'Condition 4'),
+ input.float(0, '', inline = 'TYPE', group = 'Condition 4', display = display.none),
+ input.bool(false, 'Source', inline = 'TYPE', group = 'Condition 4'),
+ input.source(close, '', inline = 'TYPE', group = 'Condition 4', display = display.none),
+ input.int(0, 'Bars Since', tooltip = 'Number of bars since this condition was true.', group = 'Condition 4'),
+ input.bool(true, 'on Bar Close', group = 'Condition 4', display = display.none)
+ )
+
+x_cond_5 = condition.new(
+ input.bool(false, 'When', inline = 'COND', group = 'Condition 5', display = display.none),
+ input.source(close, '', inline = 'COND', group = 'Condition 5', display = display.none),
+ input.string('Crossing', '', ['Crossing', 'Crossing Up', 'Crossing Down', 'Greater Than', 'Less Than', 'Rising', 'Falling'], tooltip = tt_val, inline = 'COND', group = 'Condition 5', display = display.none),
+ input.color(color.fuchsia, '', inline = 'COND', group = 'Condition 5'),
+ input.bool(false, 'Value', inline = 'TYPE', group = 'Condition 5'),
+ input.float(0, '', inline = 'TYPE', group = 'Condition 5', display = display.none),
+ input.bool(false, 'Source', inline = 'TYPE', group = 'Condition 5'),
+ input.source(close, '', inline = 'TYPE', group = 'Condition 5', display = display.none),
+ input.int(0, 'Bars Since', tooltip = 'Number of bars since this condition was true.', group = 'Condition 5'),
+ input.bool(true, 'on Bar Close', group = 'Condition 5', display = display.none)
+ )
+
+x_cona_tz = input.string('', 'Time Zone', tooltip = 'Leave blank for exchange time zone.', group = 'Settings', display = display.none)
+x_cona_sess_use = input.bool(false, 'Session', inline = 'SESS', group = 'Settings', display = display.none)
+x_cona_sess = input.session('0930-1300', '', inline = 'SESS', group = 'Settings', display = display.none)
+x_cona_freq = input.string('Once Per Bar', 'Trigger', ['Once Per Bar', 'Once Per Bar Close', 'All'], group = 'Settings', display = display.none)
+x_cona_expr_use = input.bool(false, 'Expiration', inline = 'EXPR', group = 'Settings', display = display.none)
+x_cona_expr = input.time(timestamp('January 1, 2024'), '', inline = 'EXPR', group = 'Settings', display = display.none)
+
+x_cona_mark_show = input.bool(false, 'Show Conditions', group = 'Design', display = display.none)
+x_cona_conf_show = input.bool(true, 'Show Confluence', group = 'Design', display = display.none)
+x_cona_conf_pos = switch input.string('Above', '', ['Above', 'Below'], inline = 'POS', group = 'Design')
+    'Above' => location.abovebar
+    'Below' => location.belowbar
+x_cona_conf_c = input.color(color.blue, '', inline = 'POS', group = 'Design')
+x_cona_sess_show = input.bool(true, 'Highlight Session', group = 'Design', display = display.none)
+
+x_cona_msg = input.text_area('', 'Message', tooltip = 'Available Placeholders:\n\n{{ticker}}, {{exchange}}, {{interval}}\n\n{{open}}, {{high}}, {{low}}, {{close}}\n\n{{time}}, {{timenow}}\n\n{{volume}}, {{volume_ui}}\n\n{{when_1}}, {{source_1}}\n{{when_2}}, {{source_2}}\n{{when_3}}, {{source_3}}\n{{when_4}}, {{source_4}}\n\n{{syminfo.currency}}, {{syminfo.basecurrency}}', group = 'Message', display = display.none)
+// }
+
+
+// GLOBALS {
+is_sess = (x_cona_sess_use and time == time('', x_cona_sess, x_cona_tz)) or not x_cona_sess_use
+has_expr = x_cona_expr_use and time >= x_cona_expr
+
+var expr_ln = x_cona_expr_use ? line.new(x_cona_expr, 0, x_cona_expr, 1, xloc.bar_time, extend.both, color.blue, line.style_dashed, 2) : na
+
+freq = switch x_cona_freq
+    'Once Per Bar' => alert.freq_once_per_bar
+    'Once Per Bar Close' => alert.freq_once_per_bar_close
+    'All' => alert.freq_all
+    => alert.freq_once_per_bar
+// }
+
+
+// FUNCTIONS {
+method check(condition cond) =>
+    vsrc = cond.val_use ? cond.val : cond.src_use ? cond.src : na
+
+    cond.when_use := cond.val_use and cond.src_use ? false : cond.when_use
+
+    cxo = ta.crossover(cond.when, vsrc)
+    cxu = ta.crossunder(cond.when, vsrc)
+    cxx  = ta.cross(cond.when, vsrc)
+    grt = cond.when > vsrc
+    lss = cond.when < vsrc
+    rise = ta.rising(cond.when, math.max(1, int(cond.val)))
+    fall = ta.falling(cond.when, math.max(1, int(cond.val)))
+
+    check = switch cond.evnt
+        'Crossing' => cxx
+        'Crossing Up' => cxo
+        'Crossing Down' => cxu
+        'Greater Than' => grt
+        'Less Than' => lss
+        'Rising' => rise
+        'Falling' => fall
+
+    bs = not na(ta.barssince(check)) and ta.barssince(check) <= cond.bs
+
+    oncl = (cond.oncl and barstate.isconfirmed) or not cond.oncl
+
+    check := not cond.val_use and not cond.src_use ? false : check
+
+    (cond.when_use and bs and oncl and is_sess and not has_expr) or not cond.when_use
+
+// Credit to the LibraryTimeframeHelper library from SimpleCryptoLife
+method user_tf(string tf) =>
+    int _secs = timeframe.in_seconds(tf)
+    string _prettyTF = _secs > 59 and _secs < 3600 ? str.tostring(value=(_secs/60), format='##m') : _secs > 3599 and _secs < 86400 ? str.tostring(value=(_secs/3600), format='##h') : tf == 'D' or tf == 'W' or tf == 'M' ? '1' + tf : tf
+
+method placeholders(string str) =>
+    msg = str
+
+    msg := str.replace(msg, '{{ticker}}', syminfo.ticker)
+    msg := str.replace(msg, '{{exchange}}', syminfo.prefix)
+
+    msg := str.replace(msg, '{{close}}', str.tostring(close))
+    msg := str.replace(msg, '{{open}}', str.tostring(open))
+    msg := str.replace(msg, '{{high}}', str.tostring(high))
+    msg := str.replace(msg, '{{low}}', str.tostring(low))
+    
+    msg := str.replace(msg, '{{time}}', str.tostring(time))
+    msg := str.replace(msg, '{{timenow}}', str.tostring(timenow))
+
+    msg := str.replace(msg, '{{volume}}', str.tostring(volume))
+    msg := str.replace(msg, '{{volume_ui}}', str.tostring(volume, format.volume))
+
+    msg := str.replace(msg, '{{when_1}}', str.tostring(x_cond_1.when))
+    msg := str.replace(msg, '{{source_1}}', str.tostring(x_cond_1.src))
+
+    msg := str.replace(msg, '{{when_2}}', str.tostring(x_cond_2.when))
+    msg := str.replace(msg, '{{source_2}}', str.tostring(x_cond_2.src))
+
+    msg := str.replace(msg, '{{when_3}}', str.tostring(x_cond_3.when))
+    msg := str.replace(msg, '{{source_3}}', str.tostring(x_cond_3.src))
+
+    msg := str.replace(msg, '{{when_4}}', str.tostring(x_cond_4.when))
+    msg := str.replace(msg, '{{source_4}}', str.tostring(x_cond_4.src))
+
+    msg := str.replace(msg, '{{when_5}}', str.tostring(x_cond_5.when))
+    msg := str.replace(msg, '{{source_5}}', str.tostring(x_cond_5.src))
+
+    msg := str.replace(msg, '{{interval}}', timeframe.period.user_tf())
+
+    msg := str.replace(msg, '{{syminfo.currency}}', syminfo.currency)
+    msg := str.replace(msg, '{{syminfo.basecurrency}}', syminfo.basecurrency)
+
+    msg
+// }
+
+
+// CONFLUENCES {
+cond_1 = x_cond_1.check()
+cond_2 = x_cond_2.check()
+cond_3 = x_cond_3.check()
+cond_5 = x_cond_4.check()
+cond_4 = x_cond_5.check()
+
+if cond_1
+    log.info('Condition 1')
+
+if cond_2
+    log.info('Condition 2')
+
+if cond_3
+    log.info('Condition 3')
+
+if cond_4
+    log.info('Condition 4')
+
+if cond_5
+    log.info('Condition 5')
+
+
+cond_all = cond_1 and cond_2 and cond_3 and cond_4 and cond_5
+cond_all := not x_cond_1.when_use and not x_cond_2.when_use and not x_cond_3.when_use and not x_cond_4.when_use and not x_cond_5.when_use ? false : cond_all
+// }
+
+
+// DRAW {
+bgcolor(x_cona_sess_show and x_cona_sess_use and is_sess ? color.new(color.purple, 95) : na, title = 'Session')
+
+plotshape(x_cond_1.when_use and cond_1, 'Condition 1', shape.labelup, location.bottom, color(na), 0, '◼︎', x_cond_1.c, editable = true, size = size.small, display = x_cona_mark_show ? display.all - display.status_line : display.none)
+plotshape(x_cond_2.when_use and cond_2, 'Condition 2', shape.labelup, location.bottom, color(na), 0, '‌◼︎\n ', x_cond_2.c, editable = true, size = size.small, display = x_cona_mark_show ? display.all - display.status_line : display.none)
+plotshape(x_cond_3.when_use and cond_3, 'Condition 3', shape.labelup, location.bottom, color(na), 0, '‌◼︎\n \n ', x_cond_3.c, editable = true, size = size.small, display = x_cona_mark_show ? display.all - display.status_line : display.none)
+plotshape(x_cond_4.when_use and cond_4, 'Condition 4', shape.labelup, location.bottom, color(na), 0, '‌◼︎\n \n \n ', x_cond_4.c, editable = true, size = size.small, display = x_cona_mark_show ? display.all - display.status_line : display.none)
+plotshape(x_cond_5.when_use and cond_5, 'Condition 5', shape.labelup, location.bottom, color(na), 0, '‌◼︎\n \n \n \n ', x_cond_5.c, editable = true, size = size.small, display = x_cona_mark_show ? display.all - display.status_line : display.none)
+
+plotshape(cond_all, 'Condition All', shape.diamond, x_cona_conf_pos, x_cona_conf_c, size = size.tiny, display = x_cona_conf_show ? display.all - display.status_line : display.none)
+// }
+
+
+// ALERTS {
+if cond_all
+    alert(x_cona_msg.placeholders(), freq)
+
+alertcondition(cond_1, 'Condition 1', '')
+alertcondition(cond_2, 'Condition 2', '')
+alertcondition(cond_3, 'Condition 3', '')
+alertcondition(cond_4, 'Condition 4', '')
+alertcondition(cond_5, 'Condition 5', '')
+
+a_cond = array.from(cond_1, cond_2, cond_3, cond_4, cond_5)
+
+alertcondition(a_cond.some(), 'Condition Any', '')
+
+alertcondition(cond_all, 'Condition All', '')
+// }

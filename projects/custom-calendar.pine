@@ -1,0 +1,956 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © sacredprofit
+
+//@version=6
+indicator("Event Calendar [TradersPost]", "Event Calendar", overlay=true)
+// Import required library (syntax needed even if Tools aren't directly called)
+import sacredprofit/Toolbox/2 as Tools
+
+//────────────────────────────────────────────────────────────
+// INPUTS & GLOBAL CONSTANTS
+
+view_mode = input.string("Multi-Month Grid", "View Mode", options=["Multi-Month Grid", "Single Month + Event List"], group="Display Options")
+event_color_intensity = input.int(50, "Event List Color Intensity", minval=0, maxval=100, tooltip="Lower values = more muted colors. 0 = no color, 100 = full bright colors", group="Display Options")
+
+preceding_months_count   = input.int(1, title="Preceding Months", minval=0, group="Multi-Month Options")
+following_months_count   = input.int(2, title="Following Months", minval=0, group="Multi-Month Options")
+// +1 for the current month in between preceding/following
+total_calendar_count     = preceding_months_count + following_months_count
+
+calendar_column_count    = input.int(1, title="Calendar Columns", minval=1, group="Multi-Month Options")
+min_months_per_column    = input.int(2, title="Min Months per Column", minval=1, group="Multi-Month Options")
+grid_row_count           = math.max(min_months_per_column, math.ceil((total_calendar_count + 1) / calendar_column_count))
+
+calendar_layout = input.string("↳ | Top to Bottom", title="Calendar Order", options=["↳ | Top to Bottom", "↴ | Left to Right"], group="Multi-Month Options")
+table_position = switch input.string("Top Right", "Calendar Position", ["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"]) 
+    "Top Left" => position.top_left
+    "Top Center" => position.top_center
+    "Top Right" => position.top_right
+    "Middle Left" => position.middle_left
+    "Middle Center" => position.middle_center
+    "Middle Right" => position.middle_right
+    "Bottom Left" => position.bottom_left
+    "Bottom Center" => position.bottom_center
+    "Bottom Right" => position.bottom_right
+
+calendar_block_width  = 7
+calendar_block_height = 8
+block_spacing         = 1
+
+var text_color         = chart.fg_color.hue(chart.bg_color, 5)
+var cell_color         = chart.bg_color.hue(chart.fg_color, 5)
+var alt_text_color     = color.black
+
+// Expiration colors
+monthly_expiration_color   = color.green
+monthly_stop_color         = color.blue
+quarterly_expiration_color = color.purple
+
+table_total_columns = calendar_column_count * calendar_block_width + (calendar_column_count - 1) * block_spacing
+table_total_rows    = grid_row_count       * calendar_block_height + (grid_row_count       - 1) * block_spacing
+
+var calendar_table = table.new(table_position, table_total_columns, table_total_rows, border_color=cell_color, border_width=2)
+
+
+//────────────────────────────────────────────────────────────
+// EVENT TYPE & STORAGE
+// [year_val, month_val, day_val, hour_val, minute_val, event_name, event_text_color, event_bg_color, recur, holiday, holiday_rule, nth_occurrence, weekday_target, observed_offset]
+type user_event
+    int    year_val
+    int    month_val
+    int    day_val
+    int    hour_val
+    int    minute_val
+    string event_name
+    color  event_text_color
+    color  event_bg_color
+    bool   recur            = false
+    bool   holiday          = false
+    string holiday_rule     = "fixed"
+    int    nth_occurrence   = na
+    int    weekday_target   = na
+    int    observed_offset  = 0
+
+var user_events = array.new<user_event>()
+if barstate.isfirst
+    // Set recur=false so these holidays only apply to 2025
+    array.push(user_events, user_event.new(2025, 1, 1, 9, 0, "New Year's Day", alt_text_color, color.orange, true, true, "fixed", na, na, 0))
+    array.push(user_events, user_event.new(2025, 1, na, 9, 0, "MLK Day", alt_text_color, color.orange, true, true, "nth_weekday", 3, dayofweek.monday, 0))
+    array.push(user_events, user_event.new(2025, 2, na, 9, 0, "Presidents' Day", alt_text_color, color.orange, true, true, "nth_weekday", 3, dayofweek.monday, 0))
+    array.push(user_events, user_event.new(2025, na, na, 9, 0, "Good Friday", alt_text_color, color.orange, true, true, "easter_relative", na, na, -2))
+    array.push(user_events, user_event.new(2025, 5, na, 9, 0, "Memorial Day", alt_text_color, color.orange, true, true, "nth_weekday", 4, dayofweek.monday, 0))
+    array.push(user_events, user_event.new(2025, 7, 4, 9, 0, "Independence Day", alt_text_color, color.orange, true, true, "fixed", na, na, 0))
+    array.push(user_events, user_event.new(2025, 9, na, 9, 0, "Labor Day", alt_text_color, color.orange, true, true, "nth_weekday", 1, dayofweek.monday, 0))
+    array.push(user_events, user_event.new(2025, 11, na, 9, 0, "Thanksgiving", alt_text_color, color.orange, true, true, "nth_weekday", 4, dayofweek.thursday, 0))
+    array.push(user_events, user_event.new(2025, 12, 25, 9, 0, "Christmas", alt_text_color, color.orange, true, true, "fixed", na, na, 0))
+
+
+    // Vixperation Events
+    array.push(user_events, user_event.new(2025, 1, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 2, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 3, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 4, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 5, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 6, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 7, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 8, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 9, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 10, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 11, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2025, 12, 17, 0, 0, "Vixperation", color.white, color.purple))
+
+if barstate.isfirst
+    // Vixperation Events 2026
+    array.push(user_events, user_event.new(2026, 1, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 2, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 3, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 4, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 5, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 6, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 7, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 8, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 9, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 10, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 11, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2026, 12, 19, 0, 0, "Vixperation", color.white, color.purple))
+
+    // Vixperation Events 2027
+    array.push(user_events, user_event.new(2027, 1, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 2, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 3, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 4, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 5, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 6, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 7, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 8, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 9, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 10, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 11, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2027, 12, 18, 0, 0, "Vixperation", color.white, color.purple))
+
+    // Vixperation Events 2028
+    array.push(user_events, user_event.new(2028, 1, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 2, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 3, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 4, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 5, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 6, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 7, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 8, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 9, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 10, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 11, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2028, 12, 16, 0, 0, "Vixperation", color.white, color.purple))
+
+if barstate.isfirst
+    // Vixperation Events 2029
+    array.push(user_events, user_event.new(2029, 1, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 2, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 3, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 4, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 5, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 6, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 7, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 8, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 9, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 10, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 11, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2029, 12, 22, 0, 0, "Vixperation", color.white, color.purple))
+
+    // Vixperation Events 2030
+    array.push(user_events, user_event.new(2030, 1, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 2, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 3, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 4, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 5, 18, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 6, 22, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 7, 20, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 8, 17, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 9, 21, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 10, 19, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 11, 16, 0, 0, "Vixperation", color.white, color.purple))
+    array.push(user_events, user_event.new(2030, 12, 21, 0, 0, "Vixperation", color.white, color.purple))
+
+    // FOMC Statement Events
+    array.push(user_events, user_event.new(2025, 1, 29, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2025, 3, 19, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2025, 5, 7, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2025, 6, 18, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2025, 7, 30, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2025, 9, 17, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2025, 10, 29, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2025, 12, 10, 0, 0, "FOMC Statement", color.white, color.red))
+
+    // GDP Report Events
+    array.push(user_events, user_event.new(2025, 4, 30, 0, 0, "GDP Q1 2025", color.black, color.yellow))
+    array.push(user_events, user_event.new(2025, 7, 30, 0, 0, "GDP Q2 2025", color.black, color.yellow))
+    array.push(user_events, user_event.new(2025, 10, 30, 0, 0, "GDP Q3 2025", color.black, color.yellow))
+
+    // PMI Events
+    array.push(user_events, user_event.new(2025, 1, 2, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 2, 4, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 3, 3, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 4, 1, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 5, 1, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 6, 2, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 7, 1, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 8, 4, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 9, 2, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 10, 1, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 11, 3, 0, 0, "PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2025, 12, 1, 0, 0, "PMI", color.white, color.green))
+
+    // CPI Events
+    array.push(user_events, user_event.new(2025, 2, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 3, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 4, 10, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 5, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 6, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 7, 10, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 8, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 9, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 10, 16, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 11, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2025, 12, 11, 0, 0, "CPI", color.white, color.orange))
+
+// Split into multiple if blocks to avoid "if statement too long" error
+if barstate.isfirst
+    // FOMC Statement Events 2026
+    array.push(user_events, user_event.new(2026, 1, 28, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2026, 3, 18, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2026, 4, 29, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2026, 6, 17, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2026, 7, 29, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2026, 9, 16, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2026, 10, 28, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2026, 12, 9, 0, 0, "FOMC Statement", color.white, color.red))
+
+    // FOMC Statement Events 2027
+    array.push(user_events, user_event.new(2027, 1, 27, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2027, 3, 17, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2027, 4, 28, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2027, 6, 9, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2027, 7, 28, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2027, 9, 15, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2027, 10, 27, 0, 0, "FOMC Statement", color.white, color.red))
+    array.push(user_events, user_event.new(2027, 12, 8, 0, 0, "FOMC Statement", color.white, color.red))
+
+    // FOMC Statement Events 2028
+    array.push(user_events, user_event.new(2028, 1, 26, 0, 0, "FOMC Statement", color.white, color.red))
+
+    // Jobs Report (NFP) Events 2025 - First Friday of each month
+    array.push(user_events, user_event.new(2025, 1, 10, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 2, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 3, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 4, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 5, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 6, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 7, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 8, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 9, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 10, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 11, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2025, 12, 5, 0, 0, "Jobs Report", color.white, color.blue))
+
+    // Jobs Report (NFP) Events 2026
+    array.push(user_events, user_event.new(2026, 1, 9, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 2, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 3, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 4, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 5, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 6, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 7, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 8, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 9, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 10, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 11, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2026, 12, 4, 0, 0, "Jobs Report", color.white, color.blue))
+
+    // Jobs Report (NFP) Events 2027
+    array.push(user_events, user_event.new(2027, 1, 8, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 2, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 3, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 4, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 5, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 6, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 7, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 8, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 9, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 10, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 11, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2027, 12, 3, 0, 0, "Jobs Report", color.white, color.blue))
+
+if barstate.isfirst
+    // Jobs Report (NFP) Events 2028
+    array.push(user_events, user_event.new(2028, 1, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 2, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 3, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 4, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 5, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 6, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 7, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 8, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 9, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 10, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 11, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2028, 12, 1, 0, 0, "Jobs Report", color.white, color.blue))
+
+    // Jobs Report (NFP) Events 2029
+    array.push(user_events, user_event.new(2029, 1, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 2, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 3, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 4, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 5, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 6, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 7, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 8, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 9, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 10, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 11, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2029, 12, 7, 0, 0, "Jobs Report", color.white, color.blue))
+
+if barstate.isfirst
+    // Jobs Report (NFP) Events 2030
+    array.push(user_events, user_event.new(2030, 1, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 2, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 3, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 4, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 5, 3, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 6, 7, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 7, 5, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 8, 2, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 9, 6, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 10, 4, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 11, 1, 0, 0, "Jobs Report", color.white, color.blue))
+    array.push(user_events, user_event.new(2030, 12, 6, 0, 0, "Jobs Report", color.white, color.blue))
+
+    // CPI Events 2026 - Typically mid-month
+    array.push(user_events, user_event.new(2026, 1, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 2, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 3, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 4, 10, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 5, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 6, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 7, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 8, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 9, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 10, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 11, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2026, 12, 11, 0, 0, "CPI", color.white, color.orange))
+
+    // CPI Events 2027
+    array.push(user_events, user_event.new(2027, 1, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 2, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 3, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 4, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 5, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 6, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 7, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 8, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 9, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 10, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 11, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2027, 12, 15, 0, 0, "CPI", color.white, color.orange))
+
+if barstate.isfirst
+    // CPI Events 2028
+    array.push(user_events, user_event.new(2028, 1, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 2, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 3, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 4, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 5, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 6, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 7, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 8, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 9, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 10, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 11, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2028, 12, 14, 0, 0, "CPI", color.white, color.orange))
+
+    // CPI Events 2029
+    array.push(user_events, user_event.new(2029, 1, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 2, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 3, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 4, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 5, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 6, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 7, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 8, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 9, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 10, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 11, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2029, 12, 13, 0, 0, "CPI", color.white, color.orange))
+
+if barstate.isfirst
+    // CPI Events 2030
+    array.push(user_events, user_event.new(2030, 1, 16, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 2, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 3, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 4, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 5, 15, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 6, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 7, 12, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 8, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 9, 13, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 10, 11, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 11, 14, 0, 0, "CPI", color.white, color.orange))
+    array.push(user_events, user_event.new(2030, 12, 13, 0, 0, "CPI", color.white, color.orange))
+
+if barstate.isfirst
+    // GDP Report Events 2026-2030 - Advance estimates released end of first month after quarter
+    array.push(user_events, user_event.new(2026, 1, 29, 0, 0, "GDP Q4 2025", color.black, color.yellow))
+    array.push(user_events, user_event.new(2026, 4, 29, 0, 0, "GDP Q1 2026", color.black, color.yellow))
+    array.push(user_events, user_event.new(2026, 7, 30, 0, 0, "GDP Q2 2026", color.black, color.yellow))
+    array.push(user_events, user_event.new(2026, 10, 29, 0, 0, "GDP Q3 2026", color.black, color.yellow))
+
+    array.push(user_events, user_event.new(2027, 1, 28, 0, 0, "GDP Q4 2026", color.black, color.yellow))
+    array.push(user_events, user_event.new(2027, 4, 29, 0, 0, "GDP Q1 2027", color.black, color.yellow))
+    array.push(user_events, user_event.new(2027, 7, 29, 0, 0, "GDP Q2 2027", color.black, color.yellow))
+    array.push(user_events, user_event.new(2027, 10, 28, 0, 0, "GDP Q3 2027", color.black, color.yellow))
+
+    array.push(user_events, user_event.new(2028, 1, 27, 0, 0, "GDP Q4 2027", color.black, color.yellow))
+    array.push(user_events, user_event.new(2028, 4, 27, 0, 0, "GDP Q1 2028", color.black, color.yellow))
+    array.push(user_events, user_event.new(2028, 7, 27, 0, 0, "GDP Q2 2028", color.black, color.yellow))
+    array.push(user_events, user_event.new(2028, 10, 26, 0, 0, "GDP Q3 2028", color.black, color.yellow))
+
+    array.push(user_events, user_event.new(2029, 1, 26, 0, 0, "GDP Q4 2028", color.black, color.yellow))
+    array.push(user_events, user_event.new(2029, 4, 26, 0, 0, "GDP Q1 2029", color.black, color.yellow))
+    array.push(user_events, user_event.new(2029, 7, 26, 0, 0, "GDP Q2 2029", color.black, color.yellow))
+    array.push(user_events, user_event.new(2029, 10, 26, 0, 0, "GDP Q3 2029", color.black, color.yellow))
+
+    array.push(user_events, user_event.new(2030, 1, 30, 0, 0, "GDP Q4 2029", color.black, color.yellow))
+    array.push(user_events, user_event.new(2030, 4, 26, 0, 0, "GDP Q1 2030", color.black, color.yellow))
+    array.push(user_events, user_event.new(2030, 7, 26, 0, 0, "GDP Q2 2030", color.black, color.yellow))
+    array.push(user_events, user_event.new(2030, 10, 30, 0, 0, "GDP Q3 2030", color.black, color.yellow))
+
+    // ISM PMI Events 2026-2030 - First business day of each month
+    array.push(user_events, user_event.new(2026, 1, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 2, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 3, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 4, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 5, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 6, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 7, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 8, 3, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 9, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 10, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 11, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2026, 12, 1, 0, 0, "ISM PMI", color.white, color.green))
+
+    array.push(user_events, user_event.new(2027, 1, 4, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 2, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 3, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 4, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 5, 3, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 6, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 7, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 8, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 9, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 10, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 11, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2027, 12, 1, 0, 0, "ISM PMI", color.white, color.green))
+
+if barstate.isfirst
+    array.push(user_events, user_event.new(2028, 1, 3, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 2, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 3, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 4, 3, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 5, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 6, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 7, 3, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 8, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 9, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 10, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 11, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2028, 12, 1, 0, 0, "ISM PMI", color.white, color.green))
+
+    array.push(user_events, user_event.new(2029, 1, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 2, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 3, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 4, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 5, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 6, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 7, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 8, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 9, 4, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 10, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 11, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2029, 12, 3, 0, 0, "ISM PMI", color.white, color.green))
+
+if barstate.isfirst
+    array.push(user_events, user_event.new(2030, 1, 2, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 2, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 3, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 4, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 5, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 6, 3, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 7, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 8, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 9, 3, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 10, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 11, 1, 0, 0, "ISM PMI", color.white, color.green))
+    array.push(user_events, user_event.new(2030, 12, 2, 0, 0, "ISM PMI", color.white, color.green))
+
+//────────────────────────────────────────────────────────────
+// UTILITY FUNCTIONS
+
+method get_month_name(int month_number) =>
+    switch month_number
+        1  => "January"
+        2  => "February"
+        3  => "March"
+        4  => "April"
+        5  => "May"
+        6  => "June"
+        7  => "July"
+        8  => "August"
+        9  => "September"
+        10 => "October"
+        11 => "November"
+        12 => "December"
+
+method calc_days_in_month(int year_val, int month_val) =>
+    month_val == 2
+         ? (year_val % 4 == 0 and (year_val % 100 != 0 or year_val % 400 == 0) ? 29 : 28)
+         : (month_val == 4 or month_val == 6 or month_val == 9 or month_val == 11 ? 30 : 31)
+
+method calc_target_month(int offset) =>
+    total_val   = (year(time) * 12 + (month(time) - 1)) + offset
+    target_year = math.floor(total_val / 12)
+    target_month= (total_val % 12) + 1
+    target_days = calc_days_in_month(target_year, target_month)
+    [target_year, target_month, target_days]
+
+method calc_block_index(int row_index, int col_index, int row_count, int col_count, string layout_order) =>
+    layout_order == "↳ | Top to Bottom" ? (col_index * row_count + row_index) : (row_index * col_count + col_index)
+
+method calc_nth_weekday(int year_val, int month_val, int nth, int target_weekday) =>
+    first_ts   = timestamp(syminfo.timezone, year_val, month_val, 1, 0, 0)
+    first_day  = dayofweek(first_ts)
+    offset     = (target_weekday - first_day + 7) % 7
+    day_num    = 1 + offset + (nth - 1) * 7
+    total_days = calc_days_in_month(year_val, month_val)
+    day_num <= total_days ? day_num : na
+
+method calc_easter(int year_val) =>
+    a = year_val % 19
+    b = math.floor(year_val / 100)
+    c = year_val % 100
+    d = math.floor(b / 4)
+    e = b % 4
+    f = math.floor((b + 8) / 25)
+    g = math.floor((b - f + 1) / 3)
+    h = (19 * a + b - d - g + 15) % 30
+    i = math.floor(c / 4)
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m_val = math.floor((a + 11 * h + 22 * l) / 451)
+    month_e = math.floor((h + l - 7 * m_val + 114) / 31)
+    day_e   = ((h + l - 7 * m_val + 114) % 31) + 1
+    [month_e, day_e]
+
+method calc_effective_date(user_event ev, int target_year) =>
+    effective_year = ev.recur ? target_year : ev.year_val
+    int effective_month = na
+    int effective_day   = na
+    if ev.holiday_rule == "fixed"
+        effective_month := ev.month_val
+        effective_day   := ev.day_val + ev.observed_offset
+    else if ev.holiday_rule == "nth_weekday"
+        effective_month := ev.month_val
+        effective_day   := calc_nth_weekday(effective_year, effective_month, ev.nth_occurrence, ev.weekday_target)
+    else if ev.holiday_rule == "easter_relative"
+        [easter_month, easter_day] = calc_easter(effective_year)
+        effective_month := easter_month
+        effective_day   := easter_day + ev.observed_offset
+    else
+        effective_month := ev.month_val
+        effective_day   := ev.day_val + ev.observed_offset
+    [effective_year, effective_month, effective_day]
+
+// Helper: check if a given day is a holiday
+method is_holiday(int yr, int mo, int day) =>
+    result = false
+    
+    for [i, ev] in user_events
+        if ev.holiday
+            [eff_yr, eff_mo, eff_day] = calc_effective_date(ev, yr)
+            if eff_yr == yr and eff_mo == mo and eff_day == day
+                result := true
+                break
+    result
+
+//────────────────────────────────────────────────────────────
+// 1) MONTHLY EXPIRATION
+// Nominal expiration = 3rd Friday. If that day is a holiday, adjust backward by 1 day.
+// Also compute monthly stop = the next day if it exists and isn't a holiday.
+// If the next day is in a different month, we optionally push an event for day 1 of next month.
+method calc_monthly_expiration(int yr, int mo) =>
+    nominal = calc_nth_weekday(yr, mo, 3, dayofweek.friday)
+    if na(nominal)
+        // Rare edge case if 3rd Friday can't be found => return [na, na]
+        [na, na]
+    else
+        adjusted = nominal
+        if is_holiday(yr, mo, nominal)
+            adjusted := nominal - 1
+        int stop_trading = na
+        total_days = calc_days_in_month(yr, mo)
+
+        if adjusted < total_days
+            next_day = adjusted + 1
+            if is_holiday(yr, mo, next_day)
+                stop_trading := next_day + 1
+            else
+                stop_trading := next_day
+        else if adjusted == total_days
+            // The 3rd Fri is last day => "carry over" to next month if you want
+            next_mo = mo + 1
+            next_yr = yr
+            if next_mo > 12
+                next_mo := 1
+                next_yr := yr + 1
+        [adjusted, stop_trading]
+
+//────────────────────────────────────────────────────────────
+// 2) QUARTERLY EXPIRATION
+// For months 3,6,9,12 => find the last business day not a holiday, scanning backward.
+method calc_quarterly_expiration(int yr, int mo) =>
+    if mo == 3 or mo == 6 or mo == 9 or mo == 12
+        total = calc_days_in_month(yr, mo)
+        int q_exp = na
+
+        for d = total to 1
+            ts = timestamp(syminfo.timezone, yr, mo, d, 0, 0)
+            wd = dayofweek(ts)
+            if wd >= dayofweek.monday and wd <= dayofweek.friday and not is_holiday(yr, mo, d)
+                q_exp := d
+                break
+        q_exp
+    else
+        na
+
+//────────────────────────────────────────────────────────────
+// BLOCK DRAWING
+
+method render_calendar_block(int row_index, int col_index) =>
+    base_row_index = row_index * (calendar_block_height + block_spacing)
+    base_col_index = col_index * (calendar_block_width + block_spacing)
+    row_end_index  = math.min(base_row_index + calendar_block_height - 1, table_total_rows - 1)
+    col_end_index  = math.min(base_col_index + calendar_block_width - 1, table_total_columns - 1)
+    calendar_block_index = calc_block_index(row_index, col_index, grid_row_count, calendar_column_count, calendar_layout)
+
+    if calendar_block_index < (total_calendar_count + 1)
+        [year_val, month_val, month_days] = calc_target_month(calendar_block_index - preceding_months_count)
+        header_text = str.format("{0} {1}", get_month_name(month_val), str.tostring(year_val))
+        if month == month_val
+            table.cell(calendar_table, base_col_index, base_row_index, header_text, text_color=text_color, bgcolor=text_color.hue(cell_color, 97), text_formatting=text.format_bold)
+        else
+            table.cell(calendar_table, base_col_index, base_row_index, header_text, text_color=text_color, bgcolor=cell_color, text_formatting=text.format_none)
+        table.merge_cells(calendar_table, base_col_index, base_row_index, col_end_index, base_row_index)
+
+        // Draw day-of-week headers
+        weekday_names = array.from("S", "M", "T", "W", "T", "F", "S")
+        for [i, day_label] in weekday_names
+            transparency = day_label == "S" ? 50 : 0
+            table.cell(calendar_table, base_col_index + i, base_row_index + 1, day_label,
+                       text_color=color.new(text_color, transparency),
+                       bgcolor=color.new(cell_color, transparency),
+                       text_size=11, text_formatting=text.format_bold)
+
+        // Compute monthly & quarterly expirations
+        [monthly_exp, monthly_stop] = calc_monthly_expiration(year_val, month_val)
+        quarterly_exp = (month_val == 3 or month_val == 6 or month_val == 9 or month_val == 12) ? calc_quarterly_expiration(year_val, month_val) : na
+
+        // Leading blank offset for days
+        first_day_ts  = timestamp(syminfo.timezone, year_val, month_val, 1, 0, 0)
+        offset_value  = dayofweek(first_day_ts) - 1
+
+        // Fill day cells
+        for local_row = 2 to 7
+            for local_col = 0 to 6
+                target_row_index = base_row_index + local_row
+                target_col_index = base_col_index + local_col
+                if target_row_index > row_end_index or target_col_index > col_end_index
+                    break
+
+                cell_index   = (local_row - 2) * 7 + local_col
+                transparency = (local_col == 0 or local_col == 6) ? 50 : 0
+                if cell_index < offset_value or cell_index >= offset_value + month_days
+                    table.cell(calendar_table, target_col_index, target_row_index, "",
+                               text_color=color.new(text_color, transparency),
+                               bgcolor=color.new(cell_color, transparency),
+                               text_size=13, text_formatting=text.format_none)
+                else
+                    day_number = cell_index - offset_value + 1
+                    cell_text  = str.tostring(day_number)
+                    day_text_color = color.new(text_color, transparency)
+                    day_bg_color   = color.new(cell_color, transparency)
+                    day_tooltip    = ""
+
+                    // Process all user events (holiday and non-holiday) for the day
+                    for [e_i, ev] in user_events
+                        [eff_yr, eff_mo, eff_day] = calc_effective_date(ev, year_val)
+                        if eff_yr == year_val and eff_mo == month_val and eff_day == day_number
+                            // If there's already an event recorded, append the new event name
+                            if day_tooltip == ""
+                                day_text_color := ev.event_text_color
+                                day_bg_color   := ev.event_bg_color
+                                day_tooltip    := ev.event_name
+                            else
+                                day_tooltip := day_tooltip + "\n" + ev.event_name
+
+                    // Check monthly expiration
+                    if day_number == monthly_exp
+                        day_bg_color   := monthly_expiration_color
+                        day_text_color := Tools.rcol(day_bg_color, alt_text_color)
+                        day_tooltip    := (day_tooltip == "" ? "Monthly Expiration" : day_tooltip + ", Monthly Expiration")
+
+                    if not na(monthly_stop) and day_number == monthly_stop
+                        day_bg_color   := monthly_stop_color
+                        day_text_color := Tools.rcol(day_bg_color, alt_text_color)
+                        day_tooltip    := (day_tooltip == "" ? "Monthly Stop Trading" : day_tooltip + ", Monthly Stop Trading")
+
+                    // Check quarterly expiration
+                    if not na(quarterly_exp) and day_number == quarterly_exp
+                        day_bg_color   := quarterly_expiration_color
+                        day_text_color := Tools.rcol(day_bg_color, alt_text_color)
+                        day_tooltip    := (day_tooltip == "" ? "Quarterly Expiration" : day_tooltip + ", Quarterly Expiration")
+
+                    // "Today" highlight
+                    is_today = (year_val == year(time_close) and month_val == month(time_close) and day_number == dayofmonth(time_close))
+                    if is_today
+                        table.cell(calendar_table, target_col_index, target_row_index, cell_text,
+                                   text_color=day_text_color,
+                                   bgcolor=day_text_color.hue(day_bg_color, 80),
+                                   text_size=13,
+                                   tooltip=(day_tooltip == "" ? "Today" : day_tooltip),
+                                   text_formatting=text.format_bold)
+                    else
+                        table.cell(calendar_table, target_col_index, target_row_index, cell_text,
+                                   text_color=day_text_color,
+                                   bgcolor=day_bg_color,
+                                   text_size=13,
+                                   tooltip=day_tooltip,
+                                   text_formatting=text.format_none)
+    else
+        // Merge any unused block cells
+        if base_row_index <= row_end_index and base_col_index <= col_end_index
+            table.merge_cells(calendar_table, base_col_index, base_row_index, col_end_index, row_end_index)
+
+
+//────────────────────────────────────────────────────────────
+// SPACING & LEFTOVER MERGES
+
+merge_table_spacing() =>
+    for row_block = 0 to grid_row_count - 1
+        if row_block < grid_row_count - 1
+            spacing_row = (row_block + 1) * calendar_block_height + row_block * block_spacing
+            for col_block = 0 to calendar_column_count - 1
+                c_base = col_block * (calendar_block_width + block_spacing)
+                c_end  = math.min(c_base + calendar_block_width - 1, table_total_columns - 1)
+                table.merge_cells(calendar_table, c_base, spacing_row, c_end, spacing_row)
+    for col_block = 0 to calendar_column_count - 1
+        if col_block < calendar_column_count - 1
+            spacing_col = (col_block + 1) * calendar_block_width + col_block * block_spacing
+            for row_block = 0 to grid_row_count - 1
+                r_base = row_block * (calendar_block_height + block_spacing)
+                r_end  = math.min(r_base + calendar_block_height - 1, table_total_rows - 1)
+                table.merge_cells(calendar_table, spacing_col, r_base, spacing_col, r_end)
+    var used_blocks = total_calendar_count + 1
+    int used_col_count = na
+    int used_row_count = na
+    if calendar_layout == "↳ | Top to Bottom"
+        used_col_count := math.ceil(used_blocks / grid_row_count)
+        used_row_count := grid_row_count
+        if used_col_count > calendar_column_count
+            used_col_count := calendar_column_count
+    else
+        used_row_count := math.ceil(used_blocks / calendar_column_count)
+        used_col_count := calendar_column_count
+        if used_row_count > grid_row_count
+            used_row_count := grid_row_count
+    if used_col_count < calendar_column_count
+        start_col = used_col_count * (calendar_block_width + block_spacing)
+        if start_col <= table_total_columns - 1
+            table.merge_cells(calendar_table, start_col, 0, table_total_columns - 1, table_total_rows - 1)
+    if used_row_count < grid_row_count
+        start_row = used_row_count * (calendar_block_height + block_spacing)
+        if start_row <= table_total_rows - 1
+            table.merge_cells(calendar_table, 0, start_row, table_total_columns - 1, table_total_rows - 1)
+
+
+//────────────────────────────────────────────────────────────
+// COLLECT CURRENT MONTH EVENTS
+
+type event_display
+    int    day
+    int    hour
+    int    minute
+    string name
+    color  text_color
+    color  bg_color
+
+collect_current_month_events() =>
+    var event_list = array.new<event_display>()
+    array.clear(event_list)
+
+    current_year = year(time_close)
+    current_month = month(time_close)
+
+    // Collect all events for current month
+    for [i, ev] in user_events
+        [eff_yr, eff_mo, eff_day] = calc_effective_date(ev, current_year)
+        if eff_yr == current_year and eff_mo == current_month and not na(eff_day)
+            array.push(event_list, event_display.new(eff_day, ev.hour_val, ev.minute_val, ev.event_name, ev.event_text_color, ev.event_bg_color))
+
+    // Check monthly and quarterly expirations
+    [monthly_exp, monthly_stop] = calc_monthly_expiration(current_year, current_month)
+    quarterly_exp = (current_month == 3 or current_month == 6 or current_month == 9 or current_month == 12) ? calc_quarterly_expiration(current_year, current_month) : na
+
+    if not na(monthly_exp)
+        array.push(event_list, event_display.new(monthly_exp, 16, 0, "Monthly Expiration", Tools.rcol(monthly_expiration_color, alt_text_color), monthly_expiration_color))
+    if not na(monthly_stop)
+        array.push(event_list, event_display.new(monthly_stop, 16, 0, "Monthly Stop Trading", Tools.rcol(monthly_stop_color, alt_text_color), monthly_stop_color))
+    if not na(quarterly_exp)
+        array.push(event_list, event_display.new(quarterly_exp, 16, 0, "Quarterly Expiration", Tools.rcol(quarterly_expiration_color, alt_text_color), quarterly_expiration_color))
+
+    // Sort by day, then hour, then minute
+    if array.size(event_list) > 1
+        for i = 0 to array.size(event_list) - 2
+            for j = i + 1 to array.size(event_list) - 1
+                ev_i = array.get(event_list, i)
+                ev_j = array.get(event_list, j)
+                if ev_j.day < ev_i.day or (ev_j.day == ev_i.day and ev_j.hour < ev_i.hour) or (ev_j.day == ev_i.day and ev_j.hour == ev_i.hour and ev_j.minute < ev_i.minute)
+                    array.set(event_list, i, ev_j)
+                    array.set(event_list, j, ev_i)
+
+    event_list
+
+//────────────────────────────────────────────────────────────
+// SINGLE MONTH + EVENT LIST VIEW
+
+render_single_month_view() =>
+    current_year = year(time_close)
+    current_month = month(time_close)
+    month_days = calc_days_in_month(current_year, current_month)
+
+    // Get events for current month
+    events = collect_current_month_events()
+    event_count = array.size(events)
+
+    // Calculate table size: calendar (7 cols x 8 rows) + spacing + event list header + events
+    calendar_rows = 8  // 1 header + 1 weekday + 6 date rows
+    event_header_rows = 2  // Spacing + header
+    event_list_rows = math.max(event_count, 1)  // At least 1 row even if no events
+    total_rows = calendar_rows + event_header_rows + event_list_rows
+
+    // Create table: 7 columns for calendar, but extend to show date/time/name for events
+    event_table = table.new(table_position, 7, total_rows, border_color=cell_color, border_width=2)
+
+    // Draw month header
+    header_text = str.format("{0} {1}", get_month_name(current_month), str.tostring(current_year))
+    table.cell(event_table, 0, 0, header_text, text_color=text_color, bgcolor=text_color.hue(cell_color, 97), text_formatting=text.format_bold)
+    table.merge_cells(event_table, 0, 0, 6, 0)
+
+    // Draw weekday headers
+    weekday_names = array.from("S", "M", "T", "W", "T", "F", "S")
+    for [i, day_label] in weekday_names
+        transparency = day_label == "S" ? 50 : 0
+        table.cell(event_table, i, 1, day_label,
+                   text_color=color.new(text_color, transparency),
+                   bgcolor=color.new(cell_color, transparency),
+                   text_size=size.small, text_formatting=text.format_bold)
+
+    // Calculate first day offset
+    first_day_ts = timestamp(syminfo.timezone, current_year, current_month, 1, 0, 0)
+    offset_value = dayofweek(first_day_ts) - 1
+
+    // Draw calendar days
+    for local_row = 2 to 7
+        for local_col = 0 to 6
+            cell_index = (local_row - 2) * 7 + local_col
+            transparency = (local_col == 0 or local_col == 6) ? 50 : 0
+
+            if cell_index < offset_value or cell_index >= offset_value + month_days
+                table.cell(event_table, local_col, local_row, "",
+                           text_color=color.new(text_color, transparency),
+                           bgcolor=color.new(cell_color, transparency),
+                           text_size=size.normal)
+            else
+                day_number = cell_index - offset_value + 1
+                cell_text = str.tostring(day_number)
+                day_text_color = color.new(text_color, transparency)
+                day_bg_color = color.new(cell_color, transparency)
+
+                // Check if this day has events
+                has_event = false
+                for [e_i, ev] in events
+                    if ev.day == day_number
+                        has_event := true
+                        day_bg_color := ev.bg_color
+                        day_text_color := ev.text_color
+                        break
+
+                // Highlight today
+                is_today = (day_number == dayofmonth(time_close))
+                if is_today
+                    table.cell(event_table, local_col, local_row, cell_text,
+                               text_color=day_text_color,
+                               bgcolor=day_text_color.hue(day_bg_color, 80),
+                               text_size=size.normal,
+                               text_formatting=text.format_bold)
+                else
+                    table.cell(event_table, local_col, local_row, cell_text,
+                               text_color=day_text_color,
+                               bgcolor=day_bg_color,
+                               text_size=size.normal)
+
+    // Add spacing row
+    table.cell(event_table, 0, 8, "", bgcolor=cell_color)
+    table.merge_cells(event_table, 0, 8, 6, 8)
+
+    // Event list header
+    table.cell(event_table, 0, 9, "Date", text_color=text_color, bgcolor=text_color.hue(cell_color, 97), text_formatting=text.format_bold, text_size=size.small)
+    table.cell(event_table, 1, 9, "Time", text_color=text_color, bgcolor=text_color.hue(cell_color, 97), text_formatting=text.format_bold, text_size=size.small)
+    table.merge_cells(event_table, 1, 9, 2, 9)
+    table.cell(event_table, 3, 9, "Event", text_color=text_color, bgcolor=text_color.hue(cell_color, 97), text_formatting=text.format_bold, text_size=size.small)
+    table.merge_cells(event_table, 3, 9, 6, 9)
+
+    // Draw event list
+    if event_count > 0
+        for i = 0 to event_count - 1
+            ev = array.get(events, i)
+            row_num = 10 + i
+
+            // Mix event color with background color based on user setting
+            muted_bg_color = ev.bg_color.hue(cell_color, event_color_intensity)
+
+            // Date column
+            date_text = str.format("{0}/{1}", current_month, ev.day)
+            table.cell(event_table, 0, row_num, date_text, text_color=text_color, bgcolor=muted_bg_color, text_size=size.small)
+
+            // Time column
+            time_text = ev.hour == 0 and ev.minute == 0 ? "All Day" : str.format("{0,number,00}:{1,number,00}", ev.hour, ev.minute)
+            table.cell(event_table, 1, row_num, time_text, text_color=text_color, bgcolor=muted_bg_color, text_size=size.small)
+            table.merge_cells(event_table, 1, row_num, 2, row_num)
+
+            // Event name column
+            table.cell(event_table, 3, row_num, ev.name, text_color=text_color, bgcolor=muted_bg_color, text_size=size.small, text_halign=text.align_left)
+            table.merge_cells(event_table, 3, row_num, 6, row_num)
+    else
+        // No events message
+        table.cell(event_table, 0, 10, "No events this month", text_color=text_color, bgcolor=cell_color, text_size=size.small)
+        table.merge_cells(event_table, 0, 10, 6, 10)
+
+//────────────────────────────────────────────────────────────
+// MAIN DRAW LOOP
+
+if barstate.islast
+    if view_mode == "Single Month + Event List"
+        render_single_month_view()
+    else
+        for row_index = 0 to grid_row_count - 1
+            for col_index = 0 to calendar_column_count - 1
+                render_calendar_block(row_index, col_index)
+        merge_table_spacing()

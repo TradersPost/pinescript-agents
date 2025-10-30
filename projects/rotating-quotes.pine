@@ -1,0 +1,202 @@
+//@version=6
+indicator("Rotating Quotes",
+     overlay=false,
+     max_labels_count=1)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Display Settings
+var grpDisplay = "Display Settings"
+tablePosition = input.string("Bottom Center", "Position",
+     options=["Top Left", "Top Center", "Top Right",
+              "Middle Left", "Middle Center", "Middle Right",
+              "Bottom Left", "Bottom Center", "Bottom Right"],
+     group=grpDisplay,
+     tooltip="Position of the quote display on chart")
+
+textSize = input.string("Large", "Text Size",
+     options=["Tiny", "Small", "Normal", "Large", "Huge"],
+     group=grpDisplay,
+     tooltip="Size of the quote text")
+
+// Quote Content Settings
+var grpContent = "Quote Content"
+defaultQuotesText = "💎 The market rewards patience and discipline, not impulsiveness. | 📊 Your edge is not in predicting, but in managing risk. | 🎯 Trade your plan. Plan your trade. Never deviate. | ⚖️ Risk management is the foundation of consistent profitability. | 🧘 Emotional control is the difference between traders and gamblers. | 📈 Focus on the process, not the outcome of individual trades. | 🛡️ Preserve capital first. Profit opportunities will always come. | ⏰ The market is always right. Your opinion doesn't move price. | 🎲 Accept losses gracefully. They are the cost of doing business. | 🔍 Quality setups over quantity. Wait for your edge. | 💪 Consistency compounds. Small edges add up over time. | 🚫 FOMO is not a trading strategy. Patience is. | 📉 Cut losses quickly. Let winners run. Simple but difficult. | 🧠 Master your mind, master the markets. | ⚡ The best trade is sometimes no trade at all. | 🎖️ Discipline weighs ounces. Regret weighs tons. | 🔄 Learn from every trade. Keep a detailed journal. | 💰 Protect what you have. Growth will follow. | 🎪 Trading is a marathon, not a sprint. Pace yourself. | ✨ Your greatest competition is your own emotions."
+
+customQuotes = input.text_area(defaultQuotesText, "Quotes (pipe-separated)",
+     group=grpContent,
+     tooltip="Enter your quotes separated by | (pipe). Edit the default quotes or add your own.\n\nExample: Quote 1 | Quote 2 | Quote 3")
+
+// Rotation Settings
+var grpRotation = "Rotation Settings"
+rotationSpeed = input.int(10, "Rotation Speed (seconds)",
+     minval=1, maxval=300,
+     group=grpRotation,
+     tooltip="How many seconds before switching to next quote")
+
+enableRotation = input.bool(true, "Enable Auto-Rotation",
+     group=grpRotation,
+     tooltip="Automatically rotate through quotes")
+
+randomOrder = input.bool(false, "Random Order",
+     group=grpRotation,
+     tooltip="Display quotes in random order instead of sequential")
+
+// Color Settings
+var grpColors = "Color Settings"
+bgColor = input.color(color.new(#1a1a2e, 10), "Background Color",
+     group=grpColors,
+     tooltip="Background color and transparency")
+
+textColor = input.color(color.new(color.white, 0), "Text Color",
+     group=grpColors,
+     tooltip="Color of the quote text")
+
+borderColor = input.color(color.new(#00d9ff, 30), "Border Color",
+     group=grpColors,
+     tooltip="Color of the border and frame")
+
+// Style Settings
+var grpStyle = "Style Settings"
+showBorder = input.bool(true, "Show Border",
+     group=grpStyle,
+     tooltip="Display border around the quote box")
+
+borderWidth = input.int(2, "Border Width",
+     minval=1, maxval=10,
+     group=grpStyle,
+     tooltip="Thickness of the border (in pixels)")
+
+// ============================================================================
+// QUOTE LIBRARY
+// ============================================================================
+
+// Parse quotes from text area (pipe-separated)
+var array<string> quotes = array.new<string>()
+
+if barstate.isfirst
+    // Parse quotes separated by pipe
+    string remainingText = customQuotes
+    bool hasMore = true
+
+    while hasMore
+        int pipePos = str.pos(remainingText, "|")
+        if pipePos >= 0
+            // Found a pipe - extract quote before it
+            string quote = str.substring(remainingText, 0, pipePos)
+            // Trim whitespace
+            quote := str.replace_all(quote, "  ", " ")
+            if str.length(quote) > 0
+                array.push(quotes, quote)
+            // Continue with remaining text after pipe
+            remainingText := str.substring(remainingText, pipePos + 1)
+        else
+            // No more pipes - add final quote
+            remainingText := str.replace_all(remainingText, "  ", " ")
+            if str.length(remainingText) > 0
+                array.push(quotes, remainingText)
+            hasMore := false
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+// Convert position string to table position constant
+getTablePosition(string pos) =>
+    switch pos
+        "Top Left" => position.top_left
+        "Top Center" => position.top_center
+        "Top Right" => position.top_right
+        "Middle Left" => position.middle_left
+        "Middle Center" => position.middle_center
+        "Middle Right" => position.middle_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        "Bottom Right" => position.bottom_right
+        => position.top_right
+
+// Convert text size string to size constant
+getTextSize(string size) =>
+    switch size
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        "Huge" => size.huge
+        => size.normal
+
+// Simple pseudo-random number generator using bar index and seed
+getPseudoRandom(int seed, int max) =>
+    int result = (bar_index * 9973 + seed * 7919) % max
+    math.abs(result)
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate total number of quotes
+totalQuotes = array.size(quotes)
+
+// Calculate current quote index based on rotation speed (time-based)
+// Use STATELESS approach - calculate index directly from current time
+var int previousIndex = 0
+
+// Convert seconds to milliseconds
+rotationSpeedMs = rotationSpeed * 1000
+
+// Calculate current index based on time (stateless - no need for var storage)
+int currentIndex = 0
+if enableRotation
+    if randomOrder
+        // Random based on time
+        currentIndex := getPseudoRandom(timenow / rotationSpeedMs, totalQuotes)
+    else
+        // Sequential based on time - divide current time by rotation speed
+        currentIndex := int(timenow / rotationSpeedMs) % totalQuotes
+
+// Get current quote
+currentQuote = array.get(quotes, currentIndex)
+
+// Build display text
+displayText = currentQuote
+
+// ============================================================================
+// DISPLAY
+// ============================================================================
+
+// Create table
+var table quoteTable = table.new(getTablePosition(tablePosition), 1, 1,
+     bgcolor=bgColor,
+     border_color=showBorder ? borderColor : color.new(borderColor, 100),
+     border_width=showBorder ? borderWidth : 0,
+     frame_color=showBorder ? borderColor : color.new(borderColor, 100),
+     frame_width=showBorder ? borderWidth : 0)
+
+// Update table content on every bar
+if barstate.islast
+    table.cell(quoteTable, 0, 0, displayText,
+         text_color=textColor,
+         text_size=getTextSize(textSize),
+         text_halign=text.align_center,
+         text_valign=text.align_center,
+         bgcolor=bgColor)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Alert when quote changes (optional - for users who want notifications)
+quoteChanged = currentIndex != previousIndex
+
+if quoteChanged
+    alert("New trading affirmation: " + currentQuote, alert.freq_once_per_bar)
+
+// ============================================================================
+// BACKGROUND HIGHLIGHT (SUBTLE)
+// ============================================================================
+
+// Optional: Add subtle background highlight when quote changes
+highlightColor = quoteChanged ? color.new(borderColor, 95) : na
+bgcolor(highlightColor, title="Quote Change Highlight")

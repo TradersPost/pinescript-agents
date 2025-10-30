@@ -1,0 +1,256 @@
+//@version=6
+indicator("Market Speedometer", shorttitle="Speedometer", overlay=false,
+     format=format.price, precision=0)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Speed Calculation Inputs
+speedMethod = input.string("Bar-to-Bar", "Speed Measurement Method",
+     options=["Bar-to-Bar", "True Range", "Avg Recent Bars"],
+     tooltip="How market speed is measured:\n• Bar-to-Bar: Instant response, shows each bar's movement (best for scalping)\n• True Range: Captures full candle range including gaps (good for volatile markets)\n• Avg Recent Bars: Smooths recent movements (reduces noise on choppy markets)\nStart with Bar-to-Bar for most use cases.",
+     group="Speed Calculation")
+avgBars = input.int(3, "Average Bars (if using Avg method)",
+     minval=1, maxval=20,
+     tooltip="Only applies when using 'Avg Recent Bars' method. Averages the last N bars for smoother speed readings. Lower values (2-3) = more responsive, higher values (5-10) = less noise. Increase if speedometer jumps around too much.",
+     group="Speed Calculation")
+atrPeriod = input.int(14, "ATR Period",
+     minval=1, maxval=100,
+     tooltip="Period for measuring 'normal' volatility. Speed is calculated relative to this baseline. Standard is 14 (2-3 trading weeks). Use lower (7-10) for faster adaptation to changing volatility, or higher (20-30) for more stable reference. Different instruments may need adjustment.",
+     group="Speed Calculation")
+percentileLength = input.int(100, "Percentile Ranking Length",
+     minval=20, maxval=500,
+     tooltip="How many bars to look back when ranking current speed (scales to 0-100). Standard is 100 bars. Lower values (50-70) make speedometer more sensitive to recent changes. Higher values (150-200) provide more stable context but adapt slower. Adjust based on your timeframe: lower for intraday, higher for daily charts.",
+     group="Speed Calculation")
+smoothing = input.int(3, "Speed Smoothing (EMA)",
+     minval=1, maxval=20,
+     tooltip="Smooths the speed reading to reduce erratic movements. Lower (1-2) = instant response but jumpy, higher (5-10) = stable but lags. Use 1-3 for day trading, 3-5 for swing trading. Increase if speedometer changes color too frequently.",
+     group="Speed Calculation")
+
+// Zone Threshold Inputs
+threshold1 = input.int(20, "Dead/Slow Threshold",
+     minval=0, maxval=100,
+     tooltip="Below this value = DEAD zone (gray - market consolidating, minimal movement). Speeds 0-20 indicate very low volatility. Lower this (10-15) if you want to identify even slight movements as 'active'. Raise it (25-30) if your market is naturally volatile and you want stricter 'dead' classification.",
+     group="Zone Thresholds")
+threshold2 = input.int(40, "Slow/Medium Threshold",
+     minval=0, maxval=100,
+     tooltip="Below this = SLOW zone (green - steady but calm movement). Speeds 20-40 are normal market conditions. Lower (30-35) to see medium momentum sooner. Raise (45-50) if you only want clear momentum shifts labeled as 'medium'.",
+     group="Zone Thresholds")
+threshold3 = input.int(60, "Medium/Fast Threshold",
+     minval=0, maxval=100,
+     tooltip="Below this = MEDIUM zone (yellow - increasing momentum building). Speeds 40-60 suggest market is heating up. Lower (50-55) to catch fast moves earlier. Raise (65-70) to only highlight truly significant momentum. This is often where breakouts begin.",
+     group="Zone Thresholds")
+threshold4 = input.int(80, "Fast/Extreme Threshold",
+     minval=0, maxval=100,
+     tooltip="Above this = EXTREME zone (red - maximum volatility, potential exhaustion). Speeds 80+ are unusually fast moves. Lower (70-75) to get earlier warnings of extreme conditions. Raise (85-90) to only flag the most extreme volatility spikes. High readings can signal opportunity OR danger - context matters.",
+     group="Zone Thresholds")
+
+// Average Speed Settings
+showAverage = input.bool(true, "Show Average Speed Line",
+     tooltip="Shows a blue reference line representing 'normal' speed over recent periods. Useful for identifying when current speed is above/below average. When speed crosses above average = momentum building. When below average = momentum fading. Turn off if chart looks too busy.",
+     group="Display Options")
+avgLength = input.int(20, "Average Speed Length",
+     minval=2, maxval=200,
+     tooltip="Lookback period for the average speed line. Standard is 20 bars (roughly one trading day on hourly charts). Lower (10-15) = more responsive average that adapts quickly. Higher (30-50) = more stable baseline showing longer-term speed trends. Match this to your trading timeframe.",
+     group="Display Options")
+
+// Display Options
+showTable = input.bool(true, "Show Speed Display Table",
+     tooltip="Displays a numeric speedometer reading in the corner of your chart with color-coded background. Makes it easy to see exact speed value at a glance (like a car's digital speedometer). Turn off if you prefer a cleaner chart with just the indicator line.",
+     group="Display Options")
+tablePosition = input.string("Top Right", "Table Position",
+     options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"],
+     tooltip="Where to position the speed display table on your chart. Choose a corner that doesn't obstruct your price action or other indicators. Top Right is standard, but adjust based on your chart layout preferences.",
+     group="Display Options")
+
+// Alert Settings
+enableZoneAlerts = input.bool(true, "Enable Zone Change Alerts",
+     tooltip="Receive alerts whenever market speed changes zones (e.g., from Medium to Fast, or Fast to Extreme). Helps you stay aware of momentum shifts without watching charts constantly. Useful for catching breakouts or exits. May create frequent alerts in choppy markets - consider disabling if too noisy.",
+     group="Alerts")
+enableExtremeAlerts = input.bool(true, "Enable Extreme Speed Alerts",
+     tooltip="Special alerts specifically for entering/exiting the EXTREME zone (red, 80+ speed). These high-volatility moments often signal major breakouts, news events, or exhaustion moves. Helps catch significant opportunities or avoid overextended entries. Less noisy than zone change alerts.",
+     group="Alerts")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate raw speed metric based on selected method
+atr = ta.atr(atrPeriod)
+
+priceChange = switch speedMethod
+    "Bar-to-Bar" => math.abs(close - close[1])
+    "True Range" => ta.tr
+    "Avg Recent Bars" => ta.sma(math.abs(close - close[1]), avgBars)
+    => math.abs(close - close[1])
+
+// Avoid division by zero
+rawSpeed = atr > 0 ? priceChange / atr : 0
+
+// Percentile ranking function to normalize to 0-100 scale
+percentileRank(src, length) =>
+    rank = 0.0
+    if bar_index >= length
+        count = 0
+        for i = 0 to length - 1
+            if src > src[i]
+                count := count + 1
+        rank := (count / length) * 100
+    rank
+
+// Calculate percentile-ranked speed
+rankedSpeed = percentileRank(rawSpeed, percentileLength)
+
+// Apply smoothing
+speed = ta.ema(rankedSpeed, smoothing)
+
+// Calculate average speed
+avgSpeed = ta.sma(speed, avgLength)
+
+// Determine current zone
+var string currentZone = "Dead"
+if speed >= threshold4
+    currentZone := "Extreme"
+else if speed >= threshold3
+    currentZone := "Fast"
+else if speed >= threshold2
+    currentZone := "Medium"
+else if speed >= threshold1
+    currentZone := "Slow"
+else
+    currentZone := "Dead"
+
+// Zone detection for alerts
+var string prevZone = "Dead"
+zoneChanged = currentZone != prevZone
+enteredExtreme = currentZone == "Extreme" and prevZone != "Extreme"
+exitedExtreme = currentZone != "Extreme" and prevZone == "Extreme"
+
+// Update previous zone
+if barstate.isconfirmed
+    prevZone := currentZone
+
+// Zone colors
+colorDead = color.new(color.gray, 0)
+colorSlow = color.new(color.green, 0)
+colorMedium = color.new(color.yellow, 0)
+colorFast = color.new(color.orange, 0)
+colorExtreme = color.new(color.red, 0)
+
+// Dynamic color based on zone
+speedColor = currentZone == "Extreme" ? colorExtreme :
+     currentZone == "Fast" ? colorFast :
+     currentZone == "Medium" ? colorMedium :
+     currentZone == "Slow" ? colorSlow : colorDead
+
+// Background colors (more transparent)
+bgColorDead = color.new(color.gray, 90)
+bgColorSlow = color.new(color.green, 90)
+bgColorMedium = color.new(color.yellow, 90)
+bgColorFast = color.new(color.orange, 90)
+bgColorExtreme = color.new(color.red, 90)
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+// Main speed line
+plot(speed, "Speed", color=speedColor, linewidth=2, style=plot.style_line)
+
+// Average speed line
+plot(showAverage ? avgSpeed : na, "Average Speed",
+     color=color.new(color.blue, 30), linewidth=1, style=plot.style_line)
+
+// Zone threshold lines
+hline(threshold1, "Dead/Slow", color=color.new(color.gray, 50),
+     linestyle=hline.style_dotted)
+hline(threshold2, "Slow/Medium", color=color.new(color.green, 50),
+     linestyle=hline.style_dotted)
+hline(threshold3, "Medium/Fast", color=color.new(color.yellow, 50),
+     linestyle=hline.style_dotted)
+hline(threshold4, "Fast/Extreme", color=color.new(color.orange, 50),
+     linestyle=hline.style_dotted)
+
+// Reference lines
+hline(0, "Zero", color=color.new(color.white, 70), linestyle=hline.style_solid)
+hline(50, "Midpoint", color=color.new(color.white, 70),
+     linestyle=hline.style_dashed)
+hline(100, "Max", color=color.new(color.white, 70), linestyle=hline.style_solid)
+
+// Background fills for zones
+fill(hline(0), hline(threshold1),
+     color=bgColorDead, title="Dead Zone Fill")
+fill(hline(threshold1), hline(threshold2),
+     color=bgColorSlow, title="Slow Zone Fill")
+fill(hline(threshold2), hline(threshold3),
+     color=bgColorMedium, title="Medium Zone Fill")
+fill(hline(threshold3), hline(threshold4),
+     color=bgColorFast, title="Fast Zone Fill")
+fill(hline(threshold4), hline(100),
+     color=bgColorExtreme, title="Extreme Zone Fill")
+
+// ============================================================================
+// NUMERIC DISPLAY TABLE
+// ============================================================================
+
+if showTable
+    // Determine table position
+    tablePos = tablePosition == "Top Left" ? position.top_left :
+         tablePosition == "Top Right" ? position.top_right :
+         tablePosition == "Bottom Left" ? position.bottom_left :
+         position.bottom_right
+
+    // Create table
+    var table speedTable = table.new(tablePos, 1, 2,
+         border_width=2, border_color=color.new(color.white, 50))
+
+    // Update table content
+    if barstate.islast
+        // Header
+        table.cell(speedTable, 0, 0, "SPEED",
+             text_color=color.white,
+             bgcolor=color.new(color.gray, 30),
+             text_size=size.small,
+             text_halign=text.align_center)
+
+        // Speed value with color-coded background
+        speedText = str.format("{0,number,#}", speed)
+        table.cell(speedTable, 0, 1, speedText,
+             text_color=color.white,
+             bgcolor=speedColor,
+             text_size=size.large,
+             text_halign=text.align_center)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Zone change alerts
+if enableZoneAlerts and zoneChanged and barstate.isconfirmed
+    alert("Market Speedometer: Zone changed to " + currentZone +
+         " (Speed: " + str.format("{0,number,#.##}", speed) + ")",
+         alert.freq_once_per_bar_close)
+
+// Extreme zone alerts
+if enableExtremeAlerts and barstate.isconfirmed
+    if enteredExtreme
+        alert("Market Speedometer: EXTREME speed detected! " +
+             "(Speed: " + str.format("{0,number,#.##}", speed) + ")",
+             alert.freq_once_per_bar_close)
+    else if exitedExtreme
+        alert("Market Speedometer: Exited EXTREME zone " +
+             "(Speed: " + str.format("{0,number,#.##}", speed) + ")",
+             alert.freq_once_per_bar_close)
+
+// Alert conditions for TradingView alert creation
+alertcondition(zoneChanged, "Zone Changed",
+     "Speed zone changed to {{plot(\"Speed\")}}")
+alertcondition(enteredExtreme, "Entered Extreme Zone",
+     "Market speed entered EXTREME zone")
+alertcondition(exitedExtreme, "Exited Extreme Zone",
+     "Market speed exited EXTREME zone")
+alertcondition(currentZone == "Dead", "Dead Zone",
+     "Market speed in DEAD zone")
+alertcondition(currentZone == "Extreme", "Extreme Zone Active",
+     "Market speed in EXTREME zone")
