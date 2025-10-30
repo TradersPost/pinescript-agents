@@ -1,0 +1,157 @@
+//@version=6
+indicator(title="Midnight VWAP",
+     shorttitle="Midnight VWAP",
+     overlay=true)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Session Time Inputs
+midnightStart = input.session("1700-0930",
+     title="Midnight Session",
+     tooltip="Define midnight/pre-market session time range. Default: 5:00 PM - 9:30 AM ET",
+     group="Session Times")
+
+regularStart = input.session("0930-1600",
+     title="Regular Session",
+     tooltip="Define regular trading hours. Default: 9:30 AM - 4:00 PM ET",
+     group="Session Times")
+
+timezone = input.string("America/New_York",
+     title="Timezone",
+     tooltip="Timezone for session times (e.g., America/New_York, America/Chicago, Europe/London)",
+     group="Session Times")
+
+// Visual Settings
+midnightColor = input.color(color.new(color.blue, 0),
+     title="Midnight VWAP Color",
+     tooltip="Color for midnight session VWAP line",
+     group="Visual Settings")
+
+regularColor = input.color(color.new(color.orange, 0),
+     title="Regular VWAP Color",
+     tooltip="Color for regular session VWAP line",
+     group="Visual Settings")
+
+lineWidth = input.int(1,
+     title="Line Width",
+     minval=1,
+     maxval=5,
+     tooltip="Width of VWAP lines",
+     group="Visual Settings")
+
+// ============================================================================
+// SESSION DETECTION
+// ============================================================================
+
+// Detect if current bar is in each session
+isMidnightSession = not na(time(timeframe.period, midnightStart, timezone))
+isRegularSession = not na(time(timeframe.period, regularStart, timezone))
+
+// Detect session changes (new session starting)
+var bool wasMidnightSession = false
+var bool wasRegularSession = false
+
+midnightSessionStart = isMidnightSession and not wasMidnightSession
+regularSessionStart = isRegularSession and not wasRegularSession
+
+// Update session state for next bar
+wasMidnightSession := isMidnightSession
+wasRegularSession := isRegularSession
+
+// ============================================================================
+// VWAP CALCULATIONS
+// ============================================================================
+
+// Calculate VWAP using built-in ta.vwap with custom reset logic
+midnightVWAP = ta.vwap(hlc3, midnightSessionStart)
+regularVWAP = ta.vwap(hlc3, regularSessionStart)
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+// Determine stacking order and colors
+// Both VWAPs are only visible during regular session
+midnightAbove = midnightVWAP > regularVWAP
+bothActive = isRegularSession and not na(midnightVWAP) and not na(regularVWAP)
+lineColor = bothActive ? (midnightAbove ? color.red : color.green) : color.blue
+fillColor = bothActive ? (midnightAbove ? color.new(color.red, 85) : color.new(color.green, 85)) : color.new(color.blue, 85)
+
+// Plot Midnight VWAP - solid when both active, dotted when only midnight
+p1_solid = plot(bothActive ? midnightVWAP : na,
+     title="Midnight VWAP (Solid)",
+     color=lineColor,
+     linewidth=lineWidth,
+     style=plot.style_linebr)
+
+p1_solo = plot(not bothActive ? midnightVWAP : na,
+     title="Midnight VWAP (Dotted)",
+     color=lineColor,
+     linewidth=lineWidth,
+     style=plot.style_linebr,
+     linestyle=plot.linestyle_dotted)
+
+// Plot Regular VWAP
+p2 = plot(isRegularSession ? regularVWAP : na,
+     title="Regular VWAP",
+     color=lineColor,
+     linewidth=lineWidth,
+     style=plot.style_linebr)
+
+// Fill between VWAPs based on stacking order
+fill(p1_solid, p2, color=fillColor, title="VWAP Fill")
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Calculate crossovers on every bar for consistency
+crossOverMN = ta.crossover(close, midnightVWAP)
+crossUnderMN = ta.crossunder(close, midnightVWAP)
+crossOverReg = ta.crossover(close, regularVWAP)
+crossUnderReg = ta.crossunder(close, regularVWAP)
+
+// Alert when price crosses VWAP during sessions
+midnightCrossOver = isMidnightSession and crossOverMN
+midnightCrossUnder = isMidnightSession and crossUnderMN
+regularCrossOver = isRegularSession and crossOverReg
+regularCrossUnder = isRegularSession and crossUnderReg
+
+alertcondition(midnightCrossOver,
+     title="Price Crosses Above Midnight VWAP",
+     message="Price crossed above Midnight VWAP at {{close}}")
+
+alertcondition(midnightCrossUnder,
+     title="Price Crosses Below Midnight VWAP",
+     message="Price crossed below Midnight VWAP at {{close}}")
+
+alertcondition(regularCrossOver,
+     title="Price Crosses Above Regular VWAP",
+     message="Price crossed above Regular VWAP at {{close}}")
+
+alertcondition(regularCrossUnder,
+     title="Price Crosses Below Regular VWAP",
+     message="Price crossed below Regular VWAP at {{close}}")
+
+// Session change alerts
+alertcondition(midnightSessionStart,
+     title="Midnight Session Started",
+     message="Midnight session has started - VWAP reset")
+
+alertcondition(regularSessionStart,
+     title="Regular Session Started",
+     message="Regular session has started - VWAP reset")
+
+// Trend change alerts - when VWAPs cross each other
+vwapCrossToRed = ta.crossover(midnightVWAP, regularVWAP)
+vwapCrossToGreen = ta.crossunder(midnightVWAP, regularVWAP)
+
+alertcondition(vwapCrossToRed,
+     title="Trend Changed to Red",
+     message="VWAPs crossed - Midnight VWAP now above Regular VWAP (RED)")
+
+alertcondition(vwapCrossToGreen,
+     title="Trend Changed to Green",
+     message="VWAPs crossed - Regular VWAP now above Midnight VWAP (GREEN)")
