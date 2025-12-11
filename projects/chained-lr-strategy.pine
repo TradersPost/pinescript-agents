@@ -1,0 +1,1160 @@
+//@version=6
+strategy("Chained Linear Regression Reversal Strategy",
+     shorttitle="Chain LR Strategy",
+     overlay=true,
+     max_lines_count=500,
+     initial_capital=100000,
+     default_qty_type=strategy.fixed,
+     default_qty_value=1,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=0)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Time Selection
+startTime = input.time(timestamp("2024-01-01 00:00"),
+     "Start Time",
+     tooltip="Click to select the beginning candle for regression calculation on the chart",
+     confirm=true,
+     group="Time Selection")
+
+endTime = input.time(timestamp("2024-12-31 23:59"),
+     "End Time",
+     tooltip="Click to select the ending candle for regression calculation on the chart",
+     confirm=true,
+     group="Time Selection")
+
+// Regression Settings
+ignoreWicks = input.bool(false,
+     "Ignore Wicks",
+     tooltip="When enabled, uses candle body midpoint (average of open/close) instead of wicks.\n" +
+             "This reduces noise from price extremes and focuses on body momentum.\n" +
+             "When disabled, uses the 'Price Source' setting below.",
+     group="Regression Settings")
+
+priceSource = input.source(close,
+     "Price Source",
+     tooltip="Price data for regression when 'Ignore Wicks' is disabled.\n" +
+             "Options: close, open, high, low, hl2, hlc3, ohlc4, hlcc4.\n" +
+             "Note: This setting is ignored when 'Ignore Wicks' is enabled.",
+     group="Regression Settings")
+
+regressionMode = input.string("Both",
+     "Regression Mode",
+     options=["Static", "Live", "Both"],
+     tooltip="Static: Show only original regression (solid line, locked at end time)\n" +
+             "Live: Show only dynamic updating regression (dashed line, continues beyond end time)\n" +
+             "Both: Show both for comparison (static = solid, live = dashed)",
+     group="Regression Settings")
+
+showUpperChannel = input.bool(true,
+     "Upper Deviation",
+     inline="upper",
+     group="Regression Settings")
+
+upperDeviation = input.float(2.0,
+     "",
+     minval=0.1,
+     step=0.1,
+     inline="upper",
+     tooltip="Standard deviation multiplier for upper channel",
+     group="Regression Settings")
+
+showLowerChannel = input.bool(true,
+     "Lower Deviation",
+     inline="lower",
+     group="Regression Settings")
+
+lowerDeviation = input.float(2.0,
+     "",
+     minval=0.1,
+     step=0.1,
+     inline="lower",
+     tooltip="Standard deviation multiplier for lower channel",
+     group="Regression Settings")
+
+breakoutConfirmation = input.int(1,
+     "Breakout Confirmation Bars",
+     minval=1,
+     maxval=10,
+     tooltip="Number of consecutive closes beyond the channel required to confirm breakout.\n" +
+             "The dynamic regression only starts after this many consecutive closes outside the static channel.",
+     group="Regression Settings")
+
+lockRThreshold = input.float(0.85,
+     "Lock R Threshold",
+     minval=0.5,
+     maxval=0.99,
+     step=0.01,
+     tooltip="When the dynamic regression's |Pearson R| drops below this value, it locks as the new static regression.\n" +
+             "The system then waits for price to break out of this new channel to start the next dynamic regression.",
+     group="Regression Settings")
+
+minBarsBeforeLock = input.int(5,
+     "Min Bars Before Lock",
+     minval=2,
+     maxval=50,
+     tooltip="Minimum number of bars the dynamic regression must run before it can lock as a new static.\n" +
+             "Prevents premature locking on very short regressions.",
+     group="Regression Settings")
+
+maxBarsTimeout = input.int(50,
+     "Max Bars Timeout",
+     minval=10,
+     maxval=500,
+     tooltip="If the dynamic regression doesn't reach the R threshold within this many bars,\n" +
+             "reset and start a new regression from the current bar.\n" +
+             "This prevents the dynamic from running indefinitely without locking.",
+     group="Regression Settings")
+
+// Strategy Settings
+enableStrategy = input.bool(true,
+     "Enable Strategy",
+     tooltip="Enable/disable strategy orders. When disabled, only shows the regression lines.",
+     group="Strategy Settings")
+
+stopLossPoints = input.float(10.0,
+     "Stop Loss (Points)",
+     minval=0.1,
+     step=0.5,
+     tooltip="Stop loss distance in points from entry price.",
+     group="Strategy Settings")
+
+takeProfitPoints = input.float(20.0,
+     "Take Profit (Points)",
+     minval=0.1,
+     step=0.5,
+     tooltip="Take profit distance in points from entry price.",
+     group="Strategy Settings")
+
+// Visual Settings
+regressionColor = input.color(#2962FF,
+     "Regression Line Color",
+     group="Visual Settings")
+
+regressionFillColor = input.color(color.new(#2962FF, 90),
+     "Regression Background Color",
+     tooltip="Fill color between regression channels",
+     group="Visual Settings")
+
+upperChannelColor = input.color(color.new(#26a69a, 50),
+     "Upper Channel Color",
+     group="Visual Settings")
+
+lowerChannelColor = input.color(color.new(#ef5350, 50),
+     "Lower Channel Color",
+     group="Visual Settings")
+
+lineWidth = input.int(2,
+     "Line Width",
+     minval=1,
+     maxval=5,
+     tooltip="Width for all regression and channel lines",
+     group="Visual Settings")
+
+showLabel = input.bool(true,
+     "Show Pearson R Label",
+     tooltip="Display Pearson R coefficient on chart",
+     group="Visual Settings")
+
+labelStyle = input.string("Minimal",
+     "Label Style",
+     options=["Minimal", "Detailed"],
+     tooltip="Minimal shows just R value, Detailed shows full statistics",
+     group="Visual Settings")
+
+labelPosition = input.string("Right",
+     "Label Position",
+     options=["Left", "Right", "Center"],
+     tooltip="Position of Pearson R label along the regression line.\n" +
+             "Note: When showing both regressions, static label uses this position while live label is always placed at the right.",
+     group="Visual Settings")
+
+showStatsTable = input.bool(false,
+     "Show Statistics Table",
+     tooltip="Display a table with regression statistics in the corner",
+     group="Visual Settings")
+
+tablePosition = input.string("Top Right",
+     "Table Position",
+     options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"],
+     tooltip="Position of the statistics table on chart",
+     group="Visual Settings")
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+// Maximum array size to prevent memory issues
+// Pine Script has a 100,000 element array limit, but we cap lower for performance
+var int MAX_ARRAY_SIZE = 50000
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+// Check if current bar is within selected time range
+isInRange(barTime, startT, endT) =>
+    barTime >= startT and barTime <= endT
+
+// Calculate mean of an array
+calcMean(arr, size) =>
+    sum = 0.0
+    for i = 0 to size - 1
+        sum += array.get(arr, i)
+    sum / size
+
+// Calculate standard deviation
+calcStdDev(arr, mean, size) =>
+    sumSquares = 0.0
+    for i = 0 to size - 1
+        diff = array.get(arr, i) - mean
+        sumSquares += diff * diff
+    math.sqrt(sumSquares / size)
+
+// Calculate Pearson correlation coefficient with cached means
+calcPearsonR(xArr, yArr, size, xMean, yMean) =>
+    // Calculate covariance and standard deviations
+    covariance = 0.0
+    xVariance = 0.0
+    yVariance = 0.0
+
+    for i = 0 to size - 1
+        xDiff = array.get(xArr, i) - xMean
+        yDiff = array.get(yArr, i) - yMean
+        covariance += xDiff * yDiff
+        xVariance += xDiff * xDiff
+        yVariance += yDiff * yDiff
+
+    // Calculate Pearson R
+    denominator = math.sqrt(xVariance * yVariance)
+    pearsonR = denominator != 0 ? covariance / denominator : 0.0
+    pearsonR
+
+// Calculate linear regression parameters with cached means
+calcLinearRegression(xArr, yArr, size, xMean, yMean) =>
+    numerator = 0.0
+    denominator = 0.0
+
+    for i = 0 to size - 1
+        xDiff = array.get(xArr, i) - xMean
+        yDiff = array.get(yArr, i) - yMean
+        numerator += xDiff * yDiff
+        denominator += xDiff * xDiff
+
+    slope = denominator != 0 ? numerator / denominator : 0.0
+    intercept = yMean - slope * xMean
+
+    [slope, intercept]
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Determine which regressions to show
+showStatic = regressionMode == "Static" or regressionMode == "Both"
+showLive = regressionMode == "Live" or regressionMode == "Both"
+
+// Calculate effective price based on wick setting
+// When ignoreWicks is enabled, use candle body midpoint to reduce noise from wicks
+// This is more stable for regression as it filters out short-term volatility spikes
+// Performance: math.avg() is a simple arithmetic operation, no performance penalty
+effectivePrice = ignoreWicks ? math.avg(open, close) : priceSource
+
+// Initialize arrays and variables for ORIGINAL regression
+var array<float> origXValues = array.new<float>()
+var array<float> origYValues = array.new<float>()
+var float origSlope = na
+var float origIntercept = na
+var float origPearsonR = na
+var float origStdDev = na
+var int origRangeSize = 0
+var int origFirstBarIndex = na
+var int origLastBarIndex = na
+var bool origCalculated = false
+
+// Initialize arrays and variables for LIVE regression
+var array<float> liveXValues = array.new<float>()
+var array<float> liveYValues = array.new<float>()
+var float liveSlope = na
+var float liveIntercept = na
+var float livePearsonR = na
+var float liveStdDev = na
+var int liveRangeSize = 0
+var int liveFirstBarIndex = na
+var int liveLastBarIndex = na
+
+// Breakout tracking state variables
+var bool breakoutConfirmed = false
+var int breakoutBarIndex = na
+var int consecutiveBreakoutBars = 0
+var bool isDynamicActive = false
+
+// Chaining state variables - track the "current" static regression for breakout detection
+// This can be the original or a chained (locked) regression
+var float currentStaticSlope = na
+var float currentStaticIntercept = na
+var float currentStaticStdDev = na
+var int currentStaticFirstBar = na
+var int currentStaticLastBar = na
+var float currentStaticPearsonR = na
+var int chainCount = 0  // How many times we've chained (0 = original only)
+
+// Track when dynamic R was previously above threshold (to detect the drop)
+var bool wasAboveThreshold = false
+var int lastBarAboveThreshold = na
+
+// Arrays to store historical chained regressions for drawing
+var array<float> chainedSlopes = array.new<float>()
+var array<float> chainedIntercepts = array.new<float>()
+var array<float> chainedStdDevs = array.new<float>()
+var array<int> chainedFirstBars = array.new<int>()
+var array<int> chainedLastBars = array.new<int>()
+var array<float> chainedPearsonRs = array.new<float>()
+
+// Collect data points for ORIGINAL regression (only within time range)
+if isInRange(time, startTime, endTime)
+    if na(origFirstBarIndex)
+        origFirstBarIndex := bar_index
+    origLastBarIndex := bar_index
+
+    // Prevent array overflow - only collect if under limit
+    if array.size(origXValues) < MAX_ARRAY_SIZE
+        array.push(origXValues, bar_index)
+        array.push(origYValues, effectivePrice)
+        origRangeSize := array.size(origXValues)
+
+// Calculate ORIGINAL regression (locked once complete)
+if origRangeSize >= 2 and not origCalculated
+    // Cache means for performance
+    origXMean = calcMean(origXValues, origRangeSize)
+    origYMean = calcMean(origYValues, origRangeSize)
+
+    [calcSlope, calcIntercept] = calcLinearRegression(origXValues, origYValues, origRangeSize, origXMean, origYMean)
+    origSlope := calcSlope
+    origIntercept := calcIntercept
+    origPearsonR := calcPearsonR(origXValues, origYValues, origRangeSize, origXMean, origYMean)
+
+    // Calculate standard deviation of residuals (optimized without array)
+    sumSquaredResiduals = 0.0
+    for i = 0 to origRangeSize - 1
+        xVal = array.get(origXValues, i)
+        yVal = array.get(origYValues, i)
+        predicted = origSlope * xVal + origIntercept
+        residual = yVal - predicted
+        sumSquaredResiduals += residual * residual
+
+    origStdDev := math.sqrt(sumSquaredResiduals / origRangeSize)
+
+    // Mark as calculated when we're past the end time
+    if time > endTime
+        origCalculated := true
+        // Initialize current static from original regression (first time only)
+        if na(currentStaticSlope)
+            currentStaticSlope := origSlope
+            currentStaticIntercept := origIntercept
+            currentStaticStdDev := origStdDev
+            currentStaticFirstBar := origFirstBarIndex
+            currentStaticLastBar := origLastBarIndex
+            currentStaticPearsonR := origPearsonR
+
+// ============================================================================
+// BREAKOUT DETECTION, CHAINING, AND RESET LOGIC
+// ============================================================================
+
+// Only check for breakout/chaining after static regression is calculated
+if origCalculated and showLive and not na(currentStaticSlope) and not na(currentStaticStdDev)
+    // Calculate CURRENT static channel values at current bar (extended beyond original range)
+    staticCurrentY = currentStaticSlope * bar_index + currentStaticIntercept
+    staticUpperAtBar = staticCurrentY + upperDeviation * currentStaticStdDev
+    staticLowerAtBar = staticCurrentY - lowerDeviation * currentStaticStdDev
+
+    // Check if price is inside the current static channel
+    isInsideChannel = close > staticLowerAtBar and close < staticUpperAtBar
+
+    // =========================================================================
+    // CHAINING LOGIC: Lock dynamic as new static when R drops below threshold
+    // =========================================================================
+    if isDynamicActive and liveRangeSize >= minBarsBeforeLock and not na(livePearsonR)
+        currentAboveThreshold = math.abs(livePearsonR) >= lockRThreshold
+
+        // Track if we were above threshold
+        if currentAboveThreshold
+            wasAboveThreshold := true
+            lastBarAboveThreshold := bar_index
+
+        // R dropped below threshold after being above - LOCK the dynamic as new static
+        if wasAboveThreshold and not currentAboveThreshold and not na(lastBarAboveThreshold)
+            // Store the current static in the chained arrays before replacing
+            array.push(chainedSlopes, currentStaticSlope)
+            array.push(chainedIntercepts, currentStaticIntercept)
+            array.push(chainedStdDevs, currentStaticStdDev)
+            array.push(chainedFirstBars, currentStaticFirstBar)
+            array.push(chainedLastBars, currentStaticLastBar)
+            array.push(chainedPearsonRs, currentStaticPearsonR)
+
+            // Calculate regression values at the bar BEFORE R dropped (lastBarAboveThreshold)
+            // We need to recalculate with data up to that point
+            // For simplicity, we'll use the current live values but end at lastBarAboveThreshold
+            lockEndBar = lastBarAboveThreshold
+
+            // Lock the dynamic regression as the new current static
+            currentStaticSlope := liveSlope
+            currentStaticIntercept := liveIntercept
+            currentStaticStdDev := liveStdDev
+            currentStaticFirstBar := liveFirstBarIndex
+            currentStaticLastBar := lockEndBar
+            currentStaticPearsonR := livePearsonR[1]  // Use previous R (when it was still valid)
+            chainCount := chainCount + 1
+
+            // Reset dynamic state for next breakout
+            breakoutConfirmed := false
+            isDynamicActive := false
+            consecutiveBreakoutBars := 0
+            breakoutBarIndex := na
+            wasAboveThreshold := false
+            lastBarAboveThreshold := na
+
+            // Clear live regression data
+            array.clear(liveXValues)
+            array.clear(liveYValues)
+            liveSlope := na
+            liveIntercept := na
+            livePearsonR := na
+            liveStdDev := na
+            liveRangeSize := 0
+            liveFirstBarIndex := na
+            liveLastBarIndex := na
+
+    // =========================================================================
+    // BAR-BASED TIMEOUT: Reset and restart if R threshold not reached in time
+    // =========================================================================
+    if isDynamicActive and not wasAboveThreshold and liveRangeSize >= maxBarsTimeout
+        // Timeout reached without ever hitting R threshold
+        // Store current static in chained arrays
+        array.push(chainedSlopes, currentStaticSlope)
+        array.push(chainedIntercepts, currentStaticIntercept)
+        array.push(chainedStdDevs, currentStaticStdDev)
+        array.push(chainedFirstBars, currentStaticFirstBar)
+        array.push(chainedLastBars, currentStaticLastBar)
+        array.push(chainedPearsonRs, currentStaticPearsonR)
+
+        // Start fresh regression from current bar
+        // Use the live regression data as the new static (even with low R)
+        currentStaticSlope := liveSlope
+        currentStaticIntercept := liveIntercept
+        currentStaticStdDev := liveStdDev
+        currentStaticFirstBar := liveFirstBarIndex
+        currentStaticLastBar := bar_index
+        currentStaticPearsonR := livePearsonR
+        chainCount := chainCount + 1
+
+        // Reset dynamic state for next breakout
+        breakoutConfirmed := false
+        isDynamicActive := false
+        consecutiveBreakoutBars := 0
+        breakoutBarIndex := na
+        wasAboveThreshold := false
+        lastBarAboveThreshold := na
+
+        // Clear live regression data
+        array.clear(liveXValues)
+        array.clear(liveYValues)
+        liveSlope := na
+        liveIntercept := na
+        livePearsonR := na
+        liveStdDev := na
+        liveRangeSize := 0
+        liveFirstBarIndex := na
+        liveLastBarIndex := na
+
+    // =========================================================================
+    // RESET LOGIC: If dynamic is active and price returns inside channel
+    // =========================================================================
+    if isDynamicActive and isInsideChannel
+        // Reset breakout state (but don't reset wasAboveThreshold tracking)
+        breakoutConfirmed := false
+        isDynamicActive := false
+        consecutiveBreakoutBars := 0
+        breakoutBarIndex := na
+        wasAboveThreshold := false
+        lastBarAboveThreshold := na
+        // Clear live regression data
+        array.clear(liveXValues)
+        array.clear(liveYValues)
+        liveSlope := na
+        liveIntercept := na
+        livePearsonR := na
+        liveStdDev := na
+        liveRangeSize := 0
+        liveFirstBarIndex := na
+        liveLastBarIndex := na
+
+    // =========================================================================
+    // BREAKOUT DETECTION: Only if not already in dynamic mode
+    // =========================================================================
+    if not isDynamicActive
+        // Determine breakout condition based on CURRENT static slope direction
+        // Downtrend (negative slope): break above upper channel
+        // Uptrend (positive slope): break below lower channel
+        isBreakout = currentStaticSlope < 0 ? close > staticUpperAtBar : close < staticLowerAtBar
+
+        if isBreakout
+            consecutiveBreakoutBars := consecutiveBreakoutBars + 1
+            // Check if we have enough consecutive closes to confirm
+            if consecutiveBreakoutBars >= breakoutConfirmation
+                breakoutConfirmed := true
+                isDynamicActive := true
+                // Set breakout bar to the first bar of the breakout sequence
+                breakoutBarIndex := bar_index - breakoutConfirmation + 1
+        else
+            // Reset consecutive counter if no breakout
+            consecutiveBreakoutBars := 0
+
+// Collect data points for LIVE regression (only after breakout confirmed)
+if showLive and isDynamicActive and not na(breakoutBarIndex)
+    // Initialize live arrays on first collection after breakout
+    if na(liveFirstBarIndex)
+        liveFirstBarIndex := breakoutBarIndex
+    liveLastBarIndex := bar_index
+
+    // Add new data point
+    array.push(liveXValues, bar_index)
+    array.push(liveYValues, effectivePrice)
+
+    // Implement sliding window if array gets too large
+    // Remove oldest data points to maintain performance
+    if array.size(liveXValues) > MAX_ARRAY_SIZE
+        array.shift(liveXValues)
+        array.shift(liveYValues)
+        // Update first bar index to reflect removed data
+        liveFirstBarIndex := int(array.get(liveXValues, 0))
+
+    liveRangeSize := array.size(liveXValues)
+
+// Calculate LIVE regression (updates every bar when dynamic is active)
+if showLive and isDynamicActive and liveRangeSize >= 2
+    // Cache means for performance
+    liveXMean = calcMean(liveXValues, liveRangeSize)
+    liveYMean = calcMean(liveYValues, liveRangeSize)
+
+    [calcSlope, calcIntercept] = calcLinearRegression(liveXValues, liveYValues, liveRangeSize, liveXMean, liveYMean)
+    liveSlope := calcSlope
+    liveIntercept := calcIntercept
+    livePearsonR := calcPearsonR(liveXValues, liveYValues, liveRangeSize, liveXMean, liveYMean)
+
+    // Calculate standard deviation of residuals (optimized without array)
+    sumSquaredLiveResiduals = 0.0
+    for i = 0 to liveRangeSize - 1
+        xVal = array.get(liveXValues, i)
+        yVal = array.get(liveYValues, i)
+        predicted = liveSlope * xVal + liveIntercept
+        residual = yVal - predicted
+        sumSquaredLiveResiduals += residual * residual
+
+    liveStdDev := math.sqrt(sumSquaredLiveResiduals / liveRangeSize)
+
+// ============================================================================
+// STRATEGY ORDERS
+// ============================================================================
+
+// Track breakout direction for entries
+// Downtrend breakout (slope < 0, break above) = LONG
+// Uptrend breakout (slope >= 0, break below) = SHORT
+var int lastBreakoutDirection = 0  // 1 = long, -1 = short, 0 = none
+
+// Detect new breakout (transition from not active to active)
+newBreakout = isDynamicActive and not isDynamicActive[1]
+
+// Determine direction based on the static slope at time of breakout
+if newBreakout and not na(currentStaticSlope)
+    // If static was downtrend (negative slope), breakout is upward = LONG
+    // If static was uptrend (positive slope), breakout is downward = SHORT
+    lastBreakoutDirection := currentStaticSlope < 0 ? 1 : -1
+
+// Execute strategy orders
+if enableStrategy and newBreakout
+    if lastBreakoutDirection == 1
+        // LONG entry - close any existing short first
+        if strategy.position_size < 0
+            strategy.close("Short", comment="ReverseToLong")
+        strategy.entry("Long", strategy.long, comment="LongEntry")
+        strategy.exit("Long TP/SL", "Long",
+             profit=takeProfitPoints / syminfo.mintick,
+             loss=stopLossPoints / syminfo.mintick,
+             comment_profit="LongTP",
+             comment_loss="LongSL")
+    else if lastBreakoutDirection == -1
+        // SHORT entry - close any existing long first
+        if strategy.position_size > 0
+            strategy.close("Long", comment="ReverseToShort")
+        strategy.entry("Short", strategy.short, comment="ShortEntry")
+        strategy.exit("Short TP/SL", "Short",
+             profit=takeProfitPoints / syminfo.mintick,
+             loss=stopLossPoints / syminfo.mintick,
+             comment_profit="ShortTP",
+             comment_loss="ShortSL")
+
+// ============================================================================
+// DRAWING LINES
+// ============================================================================
+
+// Delete previous lines
+var line origRegressionLine = na
+var line origUpperChannelLine = na
+var line origLowerChannelLine = na
+var linefill origChannelFill = na
+
+var line liveRegressionLine = na
+var line liveUpperChannelLine = na
+var line liveLowerChannelLine = na
+var linefill liveChannelFill = na
+
+// Current static regression lines (for chained regressions)
+var line currentStaticLine = na
+var line currentStaticUpperLine = na
+var line currentStaticLowerLine = na
+var linefill currentStaticFill = na
+
+// Arrays to hold chained regression line objects
+var array<line> chainedLines = array.new<line>()
+var array<line> chainedUpperLines = array.new<line>()
+var array<line> chainedLowerLines = array.new<line>()
+var array<linefill> chainedFills = array.new<linefill>()
+
+if barstate.islast
+    // Delete original regression lines
+    if not na(origRegressionLine)
+        line.delete(origRegressionLine)
+    if not na(origUpperChannelLine)
+        line.delete(origUpperChannelLine)
+    if not na(origLowerChannelLine)
+        line.delete(origLowerChannelLine)
+    if not na(origChannelFill)
+        linefill.delete(origChannelFill)
+
+    // Delete live regression lines
+    if not na(liveRegressionLine)
+        line.delete(liveRegressionLine)
+    if not na(liveUpperChannelLine)
+        line.delete(liveUpperChannelLine)
+    if not na(liveLowerChannelLine)
+        line.delete(liveLowerChannelLine)
+    if not na(liveChannelFill)
+        linefill.delete(liveChannelFill)
+
+    // Delete current static lines
+    if not na(currentStaticLine)
+        line.delete(currentStaticLine)
+    if not na(currentStaticUpperLine)
+        line.delete(currentStaticUpperLine)
+    if not na(currentStaticLowerLine)
+        line.delete(currentStaticLowerLine)
+    if not na(currentStaticFill)
+        linefill.delete(currentStaticFill)
+
+    // Delete all chained regression lines (with size checks to avoid empty array errors)
+    if array.size(chainedLines) > 0
+        for i = 0 to array.size(chainedLines) - 1
+            line.delete(array.get(chainedLines, i))
+        array.clear(chainedLines)
+    if array.size(chainedUpperLines) > 0
+        for i = 0 to array.size(chainedUpperLines) - 1
+            line.delete(array.get(chainedUpperLines, i))
+        array.clear(chainedUpperLines)
+    if array.size(chainedLowerLines) > 0
+        for i = 0 to array.size(chainedLowerLines) - 1
+            line.delete(array.get(chainedLowerLines, i))
+        array.clear(chainedLowerLines)
+    if array.size(chainedFills) > 0
+        for i = 0 to array.size(chainedFills) - 1
+            linefill.delete(array.get(chainedFills, i))
+        array.clear(chainedFills)
+
+// Draw ORIGINAL regression (always show as the first/base regression)
+if showStatic and origRangeSize >= 2 and barstate.islast
+    origStartY = origSlope * origFirstBarIndex + origIntercept
+    origEndY = origSlope * origLastBarIndex + origIntercept
+
+    origRegressionLine := line.new(origFirstBarIndex, origStartY,
+         origLastBarIndex, origEndY,
+         color=regressionColor,
+         width=lineWidth,
+         style=line.style_solid)
+
+    if showUpperChannel
+        origUpperStartY = origStartY + upperDeviation * origStdDev
+        origUpperEndY = origEndY + upperDeviation * origStdDev
+        origUpperChannelLine := line.new(origFirstBarIndex, origUpperStartY,
+             origLastBarIndex, origUpperEndY,
+             color=upperChannelColor,
+             width=lineWidth,
+             style=line.style_solid)
+
+    if showLowerChannel
+        origLowerStartY = origStartY - lowerDeviation * origStdDev
+        origLowerEndY = origEndY - lowerDeviation * origStdDev
+        origLowerChannelLine := line.new(origFirstBarIndex, origLowerStartY,
+             origLastBarIndex, origLowerEndY,
+             color=lowerChannelColor,
+             width=lineWidth,
+             style=line.style_solid)
+
+    if showUpperChannel and showLowerChannel
+        origChannelFill := linefill.new(origUpperChannelLine, origLowerChannelLine,
+             color=regressionFillColor)
+
+// Draw CHAINED regressions (historical locked regressions)
+if showStatic and barstate.islast and array.size(chainedSlopes) > 0
+    for i = 0 to array.size(chainedSlopes) - 1
+        cSlope = array.get(chainedSlopes, i)
+        cIntercept = array.get(chainedIntercepts, i)
+        cStdDev = array.get(chainedStdDevs, i)
+        cFirstBar = array.get(chainedFirstBars, i)
+        cLastBar = array.get(chainedLastBars, i)
+
+        cStartY = cSlope * cFirstBar + cIntercept
+        cEndY = cSlope * cLastBar + cIntercept
+
+        cLine = line.new(cFirstBar, cStartY, cLastBar, cEndY,
+             color=regressionColor,
+             width=lineWidth,
+             style=line.style_solid)
+        array.push(chainedLines, cLine)
+
+        if showUpperChannel
+            cUpperStartY = cStartY + upperDeviation * cStdDev
+            cUpperEndY = cEndY + upperDeviation * cStdDev
+            cUpperLine = line.new(cFirstBar, cUpperStartY, cLastBar, cUpperEndY,
+                 color=upperChannelColor,
+                 width=lineWidth,
+                 style=line.style_solid)
+            array.push(chainedUpperLines, cUpperLine)
+
+        if showLowerChannel
+            cLowerStartY = cStartY - lowerDeviation * cStdDev
+            cLowerEndY = cEndY - lowerDeviation * cStdDev
+            cLowerLine = line.new(cFirstBar, cLowerStartY, cLastBar, cLowerEndY,
+                 color=lowerChannelColor,
+                 width=lineWidth,
+                 style=line.style_solid)
+            array.push(chainedLowerLines, cLowerLine)
+
+// Draw CURRENT STATIC regression (the most recent locked regression used for breakout detection)
+// Only draw if it's different from original (i.e., we've chained at least once)
+if showStatic and barstate.islast and chainCount > 0 and not na(currentStaticSlope)
+    csStartY = currentStaticSlope * currentStaticFirstBar + currentStaticIntercept
+    csEndY = currentStaticSlope * currentStaticLastBar + currentStaticIntercept
+
+    currentStaticLine := line.new(currentStaticFirstBar, csStartY,
+         currentStaticLastBar, csEndY,
+         color=regressionColor,
+         width=lineWidth,
+         style=line.style_solid)
+
+    if showUpperChannel
+        csUpperStartY = csStartY + upperDeviation * currentStaticStdDev
+        csUpperEndY = csEndY + upperDeviation * currentStaticStdDev
+        currentStaticUpperLine := line.new(currentStaticFirstBar, csUpperStartY,
+             currentStaticLastBar, csUpperEndY,
+             color=upperChannelColor,
+             width=lineWidth,
+             style=line.style_solid)
+
+    if showLowerChannel
+        csLowerStartY = csStartY - lowerDeviation * currentStaticStdDev
+        csLowerEndY = csEndY - lowerDeviation * currentStaticStdDev
+        currentStaticLowerLine := line.new(currentStaticFirstBar, csLowerStartY,
+             currentStaticLastBar, csLowerEndY,
+             color=lowerChannelColor,
+             width=lineWidth,
+             style=line.style_solid)
+
+    if showUpperChannel and showLowerChannel
+        currentStaticFill := linefill.new(currentStaticUpperLine, currentStaticLowerLine,
+             color=regressionFillColor)
+
+// Draw LIVE regression and channel lines (only when dynamic is active after breakout)
+if showLive and isDynamicActive and liveRangeSize >= 2 and barstate.islast
+    // Calculate regression values at start and end points
+    liveStartY = liveSlope * liveFirstBarIndex + liveIntercept
+    liveEndY = liveSlope * liveLastBarIndex + liveIntercept
+
+    // Draw main live regression line
+    liveRegressionLine := line.new(liveFirstBarIndex, liveStartY,
+         liveLastBarIndex, liveEndY,
+         color=regressionColor,
+         width=lineWidth,
+         style=line.style_dashed)
+
+    // Draw live channel lines if enabled
+    if showUpperChannel
+        liveUpperStartY = liveStartY + upperDeviation * liveStdDev
+        liveUpperEndY = liveEndY + upperDeviation * liveStdDev
+
+        liveUpperChannelLine := line.new(liveFirstBarIndex, liveUpperStartY,
+             liveLastBarIndex, liveUpperEndY,
+             color=upperChannelColor,
+             width=lineWidth,
+             style=line.style_dotted)
+
+    if showLowerChannel
+        liveLowerStartY = liveStartY - lowerDeviation * liveStdDev
+        liveLowerEndY = liveEndY - lowerDeviation * liveStdDev
+
+        liveLowerChannelLine := line.new(liveFirstBarIndex, liveLowerStartY,
+             liveLastBarIndex, liveLowerEndY,
+             color=lowerChannelColor,
+             width=lineWidth,
+             style=line.style_dotted)
+
+    // Fill between live channels (only if both are shown)
+    if showUpperChannel and showLowerChannel
+        liveChannelFill := linefill.new(liveUpperChannelLine, liveLowerChannelLine,
+             color=regressionFillColor)
+
+// ============================================================================
+// PEARSON R DISPLAY
+// ============================================================================
+
+// Delete previous label
+var label pearsonLabel = na
+if not na(pearsonLabel)
+    label.delete(pearsonLabel)
+
+// Create new label with Pearson R value (for static regression)
+if showLabel and showStatic and origRangeSize >= 2 and barstate.islast and not na(origPearsonR)
+    // Determine label position
+    labelX = labelPosition == "Left" ? origFirstBarIndex :
+         labelPosition == "Right" ? origLastBarIndex :
+         int(math.avg(origFirstBarIndex, origLastBarIndex))
+
+    // Calculate Y position at the label X location
+    labelRegY = origSlope * labelX + origIntercept
+    labelY = labelRegY + (showUpperChannel ? upperDeviation * origStdDev : origStdDev)
+
+    // Format Pearson R with color coding
+    rValue = origPearsonR
+
+    // Color based on correlation strength
+    labelColor = math.abs(rValue) >= 0.8 ? color.new(color.green, 20) :
+         math.abs(rValue) >= 0.5 ? color.new(color.orange, 20) :
+         color.new(color.red, 20)
+
+    // Create text based on style
+    labelText = if labelStyle == "Minimal"
+        // Compact format with mode indicator if showing both
+        modePrefix = regressionMode == "Both" ? "Static " : ""
+        str.format("{0}R: {1,number,#.####}", modePrefix, rValue)
+    else
+        // Detailed format with all statistics
+        interpretation = math.abs(rValue) >= 0.8 ? "Strong" :
+             math.abs(rValue) >= 0.5 ? "Moderate" :
+             "Weak"
+        direction = rValue >= 0 ? "Positive" : "Negative"
+        modeHeader = regressionMode == "Both" ? "STATIC\n" : ""
+        str.format("{0}{1} {2}\nR: {3,number,#.####}\nR²: {4,number,#.####}\nBars: {5}",
+             modeHeader,
+             direction,
+             interpretation,
+             rValue,
+             rValue * rValue,
+             origRangeSize)
+
+    pearsonLabel := label.new(labelX,
+         labelY,
+         text=labelText,
+         style=label.style_label_down,
+         color=labelColor,
+         textcolor=color.white,
+         size=labelStyle == "Minimal" ? size.small : size.normal,
+         textalign=text.align_center)
+
+// Create label for live regression R value
+var label livePearsonLabel = na
+if not na(livePearsonLabel)
+    label.delete(livePearsonLabel)
+
+if showLabel and showLive and isDynamicActive and liveRangeSize >= 2 and barstate.islast and not na(livePearsonR)
+    // Position label based on mode and label position setting
+    liveLabelX = if regressionMode == "Both"
+        // When showing both, always place live label at the right to avoid overlap
+        liveLastBarIndex
+    else
+        // When showing only live, respect the label position setting
+        labelPosition == "Left" ? liveFirstBarIndex :
+             labelPosition == "Right" ? liveLastBarIndex :
+             int(math.avg(liveFirstBarIndex, liveLastBarIndex))
+
+    liveLabelRegY = liveSlope * liveLabelX + liveIntercept
+    liveLabelY = liveLabelRegY + (showUpperChannel ? upperDeviation * liveStdDev : liveStdDev)
+
+    liveRValue = livePearsonR
+    liveLabelColor = math.abs(liveRValue) >= 0.8 ? color.new(color.green, 20) :
+         math.abs(liveRValue) >= 0.5 ? color.new(color.orange, 20) :
+         color.new(color.red, 20)
+
+    liveLabelText = if labelStyle == "Minimal"
+        // Add "Live" prefix when showing both modes
+        modePrefix = regressionMode == "Both" ? "Live " : ""
+        str.format("{0}R: {1,number,#.####}", modePrefix, liveRValue)
+    else
+        liveInterpretation = math.abs(liveRValue) >= 0.8 ? "Strong" :
+             math.abs(liveRValue) >= 0.5 ? "Moderate" :
+             "Weak"
+        liveDirection = liveRValue >= 0 ? "Positive" : "Negative"
+        modeHeader = regressionMode == "Both" ? "LIVE\n" : ""
+        str.format("{0}{1} {2}\nR: {3,number,#.####}\nR²: {4,number,#.####}\nBars: {5}",
+             modeHeader,
+             liveDirection,
+             liveInterpretation,
+             liveRValue,
+             liveRValue * liveRValue,
+             liveRangeSize)
+
+    livePearsonLabel := label.new(liveLabelX,
+         liveLabelY,
+         text=liveLabelText,
+         style=label.style_label_down,
+         color=liveLabelColor,
+         textcolor=color.white,
+         size=labelStyle == "Minimal" ? size.small : size.normal,
+         textalign=text.align_center)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Alert when correlation is strong
+strongCorrelation = showStatic and origRangeSize >= 2 and math.abs(origPearsonR) >= 0.8
+liveStrongCorrelation = showLive and isDynamicActive and liveRangeSize >= 2 and math.abs(livePearsonR) >= 0.8
+
+alertcondition(strongCorrelation,
+     title="Strong Correlation Detected (Original)",
+     message="Original Pearson R = {{plot_0}}")
+
+alertcondition(liveStrongCorrelation,
+     title="Strong Correlation Detected (Live)",
+     message="Live Pearson R = {{plot_1}}")
+
+// Alert when breakout is confirmed (dynamic regression starts)
+breakoutJustConfirmed = isDynamicActive and isDynamicActive != isDynamicActive[1]
+alertcondition(breakoutJustConfirmed,
+     title="Breakout Confirmed - Dynamic Regression Started",
+     message="Price broke out of static channel. Dynamic regression now active.")
+
+// Alert when a new chain is created (dynamic locked as new static)
+chainJustCreated = chainCount > chainCount[1]
+alertcondition(chainJustCreated,
+     title="New Chain Created - Dynamic Locked as Static",
+     message="Dynamic regression R dropped below threshold. Locked as new static regression.")
+
+// Strategy entry alerts
+longEntry = enableStrategy and newBreakout and lastBreakoutDirection == 1
+shortEntry = enableStrategy and newBreakout and lastBreakoutDirection == -1
+
+alertcondition(longEntry,
+     title="Long Entry Signal",
+     message="Breakout LONG entry triggered. Price broke above downtrend channel.")
+
+alertcondition(shortEntry,
+     title="Short Entry Signal",
+     message="Breakout SHORT entry triggered. Price broke below uptrend channel.")
+
+// ============================================================================
+// PLOT OUTPUT VALUES (for debugging and alerts)
+// ============================================================================
+
+plot(origPearsonR,
+     title="Original Pearson R",
+     display=display.data_window)
+
+plot(livePearsonR,
+     title="Live Pearson R",
+     display=display.data_window)
+
+plot(origSlope,
+     title="Original Slope",
+     display=display.data_window)
+
+plot(liveSlope,
+     title="Live Slope",
+     display=display.data_window)
+
+plot(origRangeSize,
+     title="Original Sample Size",
+     display=display.data_window)
+
+plot(liveRangeSize,
+     title="Live Sample Size",
+     display=display.data_window)
+
+plot(isDynamicActive ? 1 : 0,
+     title="Dynamic Active",
+     display=display.data_window)
+
+plot(consecutiveBreakoutBars,
+     title="Consecutive Breakout Bars",
+     display=display.data_window)
+
+plot(chainCount,
+     title="Chain Count",
+     display=display.data_window)
+
+plot(wasAboveThreshold ? 1 : 0,
+     title="Was Above R Threshold",
+     display=display.data_window)
+
+plot(lastBreakoutDirection,
+     title="Last Breakout Direction (1=Long, -1=Short)",
+     display=display.data_window)
+
+// ============================================================================
+// STATISTICS TABLE
+// ============================================================================
+
+// Delete previous table
+var table statsTable = na
+if not na(statsTable)
+    table.delete(statsTable)
+
+// Create statistics table if enabled
+if showStatsTable and barstate.islast and (origRangeSize >= 2 or liveRangeSize >= 2)
+    // Determine table position
+    tablePos = tablePosition == "Top Left" ? position.top_left :
+               tablePosition == "Top Right" ? position.top_right :
+               tablePosition == "Bottom Left" ? position.bottom_left :
+               position.bottom_right
+
+    // Calculate table rows based on what's being displayed
+    // Base: 1 title + 4 stats per regression + 1 separator (when showing both)
+    hasStaticData = showStatic and origRangeSize >= 2
+    hasLiveData = showLive and isDynamicActive and liveRangeSize >= 2
+
+    rows = if hasStaticData and hasLiveData
+        9  // Title + Static header + 4 stats + Live header + 4 stats
+    else if hasStaticData or hasLiveData
+        5  // Title + 4 stats
+    else
+        2  // Title + error message
+
+    statsTable := table.new(tablePos, 2, rows,
+                           bgcolor=color.new(color.black, 85),
+                           border_width=1,
+                           border_color=color.new(color.gray, 50))
+
+    // Title
+    titleText = regressionMode == "Static" ? "Static Regression" : regressionMode == "Live" ? "Live Regression" : "Regression Statistics"
+    table.cell(statsTable, 0, 0, titleText,
+              text_color=color.white, text_size=size.normal,
+              bgcolor=color.new(#2962FF, 70))
+    table.merge_cells(statsTable, 0, 0, 1, 0)
+
+    row = 1
+
+    // Original regression stats (if showing static)
+    if showStatic and origRangeSize >= 2
+        if regressionMode == "Both"
+            table.cell(statsTable, 0, row, "Original",
+                      text_color=color.new(color.white, 30), text_size=size.small,
+                      bgcolor=color.new(color.black, 95))
+            table.merge_cells(statsTable, 0, row, 1, row)
+            row += 1
+
+        table.cell(statsTable, 0, row, "Pearson R",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.format("{0,number,#.####}", origPearsonR),
+                  text_color=color.white, text_size=size.small)
+
+        row += 1
+        table.cell(statsTable, 0, row, "R²",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.format("{0,number,#.####}", origPearsonR * origPearsonR),
+                  text_color=color.white, text_size=size.small)
+
+        row += 1
+        table.cell(statsTable, 0, row, "Slope",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.format("{0,number,#.######}", origSlope),
+                  text_color=color.white, text_size=size.small)
+
+        row += 1
+        table.cell(statsTable, 0, row, "Bars",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.tostring(origRangeSize),
+                  text_color=color.white, text_size=size.small)
+
+        row += 1
+
+    // Live regression stats (if showing live and dynamic is active)
+    if showLive and isDynamicActive and liveRangeSize >= 2
+        if regressionMode == "Both"
+            table.cell(statsTable, 0, row, "Live",
+                      text_color=color.new(color.orange, 20), text_size=size.small,
+                      bgcolor=color.new(color.black, 95))
+            table.merge_cells(statsTable, 0, row, 1, row)
+            row += 1
+
+        table.cell(statsTable, 0, row, "Pearson R",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.format("{0,number,#.####}", livePearsonR),
+                  text_color=color.white, text_size=size.small)
+
+        row += 1
+        table.cell(statsTable, 0, row, "R²",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.format("{0,number,#.####}", livePearsonR * livePearsonR),
+                  text_color=color.white, text_size=size.small)
+
+        row += 1
+        table.cell(statsTable, 0, row, "Slope",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.format("{0,number,#.######}", liveSlope),
+                  text_color=color.white, text_size=size.small)
+
+        row += 1
+        table.cell(statsTable, 0, row, "Bars",
+                  text_color=color.white, text_size=size.small)
+        table.cell(statsTable, 1, row, str.tostring(liveRangeSize),
+                  text_color=color.white, text_size=size.small)
+
+// ============================================================================
+// WARNINGS AND VALIDATION
+// ============================================================================
+
+// Warning for insufficient data
+var label warningLabel = na
+if not na(warningLabel)
+    label.delete(warningLabel)
+
+if barstate.islast and origRangeSize < 2 and isInRange(time, startTime, endTime)
+    warningLabel := label.new(bar_index,
+         high,
+         text="⚠ Insufficient data for regression\nNeed at least 2 data points",
+         style=label.style_label_down,
+         color=color.new(color.orange, 20),
+         textcolor=color.white,
+         size=size.normal)
+
+// Warning for invalid time range
+if barstate.islast and startTime >= endTime
+    warningLabel := label.new(bar_index,
+         high,
+         text="⚠ Invalid time range\nStart time must be before end time",
+         style=label.style_label_down,
+         color=color.new(color.red, 20),
+         textcolor=color.white,
+         size=size.normal)
+
+// Warning for array size limit reached
+if barstate.islast and (origRangeSize >= MAX_ARRAY_SIZE or liveRangeSize >= MAX_ARRAY_SIZE)
+    warningLabel := label.new(bar_index,
+         low,
+         text="ℹ Maximum data points reached (" + str.tostring(MAX_ARRAY_SIZE) + ")\n" +
+              (liveRangeSize >= MAX_ARRAY_SIZE ? "Live regression using sliding window" : "Original regression capped"),
+         style=label.style_label_up,
+         color=color.new(color.blue, 20),
+         textcolor=color.white,
+         size=size.small)
