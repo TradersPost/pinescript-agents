@@ -165,21 +165,22 @@ Claude: [pine-publisher adds documentation and ensures compliance]
 ## 📚 Available Templates
 
 ### Indicators
-- **Momentum**: RSI, Stochastic, MACD variations
-- **Trend**: Moving average systems, Supertrend
-- **Volume**: OBV, Volume Profile, CVD
-- **Volatility**: Bollinger Bands, ATR, Keltner Channels
+- **RSI Divergence** — RSI with bullish/bearish divergence detection
+- **Multi-Timeframe** — Multi-timeframe analysis indicator
+- **Support & Resistance** — Key level identification
+- **VWAP Bands** — VWAP with standard deviation bands
+- **RSI Basic** — Simple RSI momentum indicator
 
 ### Strategies
-- **Trend Following**: MA crosses, trend riders
-- **Mean Reversion**: Oversold/overbought systems
-- **Breakout**: Range breakouts, Donchian channels
-- **Scalping**: Quick entry/exit systems
+- **Breakout** — Range breakout entry system
+- **Mean Reversion** — Oversold/overbought reversal system
+- **Momentum** — Momentum-based entry strategy
+- **MA Cross** — Moving average crossover strategy
 
 ### Utilities
-- **Risk Management**: Position sizing, stop losses
-- **Debugging**: Label outputs, table monitors
-- **Backtesting**: Performance metrics, statistics
+- **Debug Panel** — Label and table debugging tools
+- **Risk Manager** — Position sizing and stop losses
+- **Session Filter** — Trading session time filters
 
 ## 🗣️ Natural Language Interface
 
