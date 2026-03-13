@@ -8,7 +8,7 @@ A comprehensive Pine Script development environment powered by Claude Code's Ski
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/tosaha/pinescript-agents.git
+   git clone https://github.com/TradersPost/pinescript-agents.git
    cd pinescript-agents
    ```
 
@@ -27,7 +27,7 @@ A comprehensive Pine Script development environment powered by Claude Code's Ski
    code .
 
    # Or use Claude Code CLI
-   claude code .
+   claude
    ```
 
 4. **Just type "start" in Claude chat**
@@ -97,19 +97,21 @@ You: "Build a complete trading system with backtesting"
 pinescript-agents/
 ├── .claude/
 │   ├── skills/          # AI skill configurations (SKILL.md files)
-│   └── hooks/           # System hooks for commands
+│   ├── commands/         # Slash commands (start, create, video, etc.)
+│   └── hooks/            # System hooks for commands
 ├── docs/
-│   ├── pinescript-v6/   # Pine Script documentation
-│   └── tradingview/     # Platform documentation
-├── templates/           # Ready-to-use templates
-│   ├── indicators/      # Indicator templates
-│   ├── strategies/      # Strategy templates
-│   └── utilities/       # Helper functions
-├── projects/            # Your Pine Script projects
-├── examples/            # Example scripts
-├── tools/               # Utility scripts
-├── CLAUDE.md            # Claude Code instructions
-└── CHANGELOG.md         # Version history
+│   ├── docs/             # User guide (concepts, language, FAQ, errors)
+│   ├── manual/           # Complete Pine Script v6 reference
+│   └── server/           # MCP documentation server
+├── templates/            # Ready-to-use templates
+│   ├── indicators/       # Indicator templates
+│   ├── strategies/       # Strategy templates
+│   └── utilities/        # Helper functions
+├── projects/             # Your Pine Script projects
+├── examples/             # Example scripts
+├── tools/                # Utility scripts
+├── CLAUDE.md             # Claude Code instructions
+└── CHANGELOG.md          # Version history
 ```
 
 ## 💡 Usage Examples
@@ -233,9 +235,8 @@ Skills activate automatically based on what you're trying to accomplish.
 
 ## 📖 Documentation
 
-- [Pine Script v6 Reference](docs/pinescript-v6/language-reference.md)
-- [Built-in Functions](docs/pinescript-v6/built-in-functions.md)
-- [TradingView Environment](docs/tradingview/environment.md)
+- [Pine Script v6 Reference](docs/manual/pinescriptv6_complete_reference.md)
+- [User Guide](docs/docs/index.md)
 - [Skill Documentation](.claude/skills/)
 - [Changelog](CHANGELOG.md)
 
@@ -255,7 +256,7 @@ MIT License - feel free to use this project for any purpose.
 ## 🙏 Acknowledgments
 
 - Built for use with [Claude Code](https://claude.ai/code)
-- Powered by Claude Code's [Skills system](https://code.claude.com/docs/en/skills)
+- Powered by Claude Code's Skills system
 - Designed for [TradingView](https://www.tradingview.com) Pine Script v6
 - Community contributions and feedback
 
