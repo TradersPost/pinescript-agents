@@ -1,0 +1,246 @@
+//@version=6
+strategy("Order Block Trading Strategy - Smart Money Concepts", overlay=true, margin_long=100, margin_short=100, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ============================================================================
+// ORDER BLOCK TRADING STRATEGY - SMART MONEY CONCEPTS
+// ============================================================================
+// This strategy identifies institutional order blocks and trades reversals
+// when price returns to these zones. Based on ICT (Inner Circle Trader) concepts.
+//
+// Simplified approach:
+// - Bullish Order Block: Strong bearish candle followed by reversal upward
+// - Bearish Order Block: Strong bullish candle followed by reversal downward
+// - Entry: When price retests the order block zone with confirmation
+// ============================================================================
+
+// === INPUTS ===
+// Order Block Detection
+swingLength = input.int(5, "Swing Detection Length", minval=2, maxval=20, tooltip="Length for detecting swing highs and lows")
+minCandleSize = input.float(0.5, "Minimum Candle Body Size (%)", minval=0.1, maxval=3.0, step=0.1, tooltip="Minimum candle body size as % of price")
+useVolumeFilter = input.bool(false, "Use Volume Filter", tooltip="Only consider blocks with above-average volume")
+
+// Entry Settings
+riskRewardRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.5, tooltip="Target profit as multiple of risk")
+stopLossATRMultiplier = input.float(1.5, "Stop Loss (ATR Multiple)", minval=0.5, maxval=5.0, step=0.5, tooltip="Stop loss distance in ATR multiples")
+
+// Visual Settings
+showBullishZones = input.bool(true, "Show Bullish Order Blocks", group="Display")
+showBearishZones = input.bool(true, "Show Bearish Order Blocks", group="Display")
+showLabels = input.bool(true, "Show Entry Labels", group="Display")
+bullishColor = input.color(color.new(color.green, 80), "Bullish Zone Color", group="Display")
+bearishColor = input.color(color.new(color.red, 80), "Bearish Zone Color", group="Display")
+
+// === CALCULATIONS ===
+
+// ATR for stop loss
+atr = ta.atr(14)
+
+// Volume filter
+avgVol = ta.sma(volume, 20)
+volumeCondition = not useVolumeFilter or volume > avgVol
+
+// Detect swing points
+swingHigh = ta.pivothigh(high, swingLength, swingLength)
+swingLow = ta.pivotlow(low, swingLength, swingLength)
+
+// Calculate candle properties
+candleBody = math.abs(close - open)
+candleRange = high - low
+bodyPercent = candleRange > 0 ? (candleBody / candleRange) * 100 : 0
+isBullish = close > open
+isBearish = close < open
+strongCandle = (candleBody / close * 100) >= minCandleSize
+
+// === ORDER BLOCK STORAGE ===
+var float bullishOB_high = na
+var float bullishOB_low = na
+var int bullishOB_bar = na
+var bool bullishOB_active = false
+
+var float bearishOB_high = na
+var float bearishOB_low = na
+var int bearishOB_bar = na
+var bool bearishOB_active = false
+
+// === DETECT BULLISH ORDER BLOCK ===
+// Look for swing low with strong bearish candle
+if not na(swingLow)
+    // Find strong bearish candle before the swing low
+    lookbackStart = swingLength + 1
+    lookbackEnd = swingLength + 10
+
+    for i = lookbackStart to lookbackEnd
+        if isBearish[i] and strongCandle[i] and volumeCondition[i]
+            // This is our bullish order block (last bearish push before reversal)
+            bullishOB_high := high[i]
+            bullishOB_low := low[i]
+            bullishOB_bar := bar_index - i
+            bullishOB_active := true
+
+            if showBullishZones
+                box.new(left=bar_index - i, top=bullishOB_high, right=bar_index + 20, bottom=bullishOB_low, border_color=color.new(color.green, 60), bgcolor=bullishColor, extend=extend.right)
+                label.new(x=bar_index - i, y=bullishOB_low, text="Bullish OB", style=label.style_label_up, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
+            break
+
+// === DETECT BEARISH ORDER BLOCK ===
+// Look for swing high with strong bullish candle
+if not na(swingHigh)
+    // Find strong bullish candle before the swing high
+    lookbackStart = swingLength + 1
+    lookbackEnd = swingLength + 10
+
+    for i = lookbackStart to lookbackEnd
+        if isBullish[i] and strongCandle[i] and volumeCondition[i]
+            // This is our bearish order block (last bullish push before reversal)
+            bearishOB_high := high[i]
+            bearishOB_low := low[i]
+            bearishOB_bar := bar_index - i
+            bearishOB_active := true
+
+            if showBearishZones
+                box.new(left=bar_index - i, top=bearishOB_high, right=bar_index + 20, bottom=bearishOB_low, border_color=color.new(color.red, 60), bgcolor=bearishColor, extend=extend.right)
+                label.new(x=bar_index - i, y=bearishOB_high, text="Bearish OB", style=label.style_label_down, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
+            break
+
+// === CHECK FOR RETEST ===
+
+// Price is retesting bullish order block
+inBullishOB = false
+if bullishOB_active and not na(bullishOB_high) and not na(bullishOB_low)
+    // Check if current price is touching the order block
+    if low <= bullishOB_high and high >= bullishOB_low
+        inBullishOB := true
+    // Deactivate if price breaks below (order block failed)
+    if close < bullishOB_low - atr
+        bullishOB_active := false
+
+// Price is retesting bearish order block
+inBearishOB = false
+if bearishOB_active and not na(bearishOB_high) and not na(bearishOB_low)
+    // Check if current price is touching the order block
+    if low <= bearishOB_high and high >= bearishOB_low
+        inBearishOB := true
+    // Deactivate if price breaks above (order block failed)
+    if close > bearishOB_high + atr
+        bearishOB_active := false
+
+// === ENTRY CONDITIONS ===
+
+// Bullish entry: Price retests bullish OB and shows bullish momentum
+bullishEntry = inBullishOB and isBullish and close > open and volumeCondition
+
+// Bearish entry: Price retests bearish OB and shows bearish momentum
+bearishEntry = inBearishOB and isBearish and close < open and volumeCondition
+
+// === RISK MANAGEMENT ===
+
+var float stopLoss = na
+var float takeProfit = na
+
+// Long trade setup
+if bullishEntry and strategy.position_size == 0
+    stopLoss := close - (atr * stopLossATRMultiplier)
+    riskDistance = close - stopLoss
+    takeProfit := close + (riskDistance * riskRewardRatio)
+
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Exit Long", "Long", stop=stopLoss, limit=takeProfit)
+
+    if showLabels
+        label.new(x=bar_index, y=low, text="LONG\nEntry: " + str.tostring(close, "#.##") + "\nSL: " + str.tostring(stopLoss, "#.##") + "\nTP: " + str.tostring(takeProfit, "#.##"), style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.normal)
+
+    // Deactivate order block after entry
+    bullishOB_active := false
+
+// Short trade setup
+if bearishEntry and strategy.position_size == 0
+    stopLoss := close + (atr * stopLossATRMultiplier)
+    riskDistance = stopLoss - close
+    takeProfit := close - (riskDistance * riskRewardRatio)
+
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Exit Short", "Short", stop=stopLoss, limit=takeProfit)
+
+    if showLabels
+        label.new(x=bar_index, y=high, text="SHORT\nEntry: " + str.tostring(close, "#.##") + "\nSL: " + str.tostring(stopLoss, "#.##") + "\nTP: " + str.tostring(takeProfit, "#.##"), style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.normal)
+
+    // Deactivate order block after entry
+    bearishOB_active := false
+
+// === VISUAL PLOTS ===
+
+// Plot stop loss and take profit
+plot(strategy.position_size != 0 ? stopLoss : na, "Stop Loss", color.red, 2, plot.style_linebr)
+plot(strategy.position_size != 0 ? takeProfit : na, "Take Profit", color.green, 2, plot.style_linebr)
+
+// Plot entry signals
+plotshape(bullishEntry and strategy.position_size == 0, "Long Signal", shape.triangleup, location.belowbar, color.new(color.green, 0), size=size.small)
+plotshape(bearishEntry and strategy.position_size == 0, "Short Signal", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.small)
+
+// Highlight active order blocks
+bgcolor(inBullishOB and bullishOB_active ? color.new(color.green, 95) : na, title="In Bullish OB")
+bgcolor(inBearishOB and bearishOB_active ? color.new(color.red, 95) : na, title="In Bearish OB")
+
+// === PERFORMANCE METRICS TABLE ===
+
+var table statsTable = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 85), frame_color=color.gray, frame_width=1, border_color=color.gray, border_width=1)
+
+if barstate.islast
+    // Calculate statistics
+    totalTrades = strategy.closedtrades
+    winningTrades = 0
+    losingTrades = 0
+    totalProfit = 0.0
+    totalLoss = 0.0
+
+    for i = 0 to totalTrades - 1
+        tradeProfit = strategy.closedtrades.profit(i)
+        if tradeProfit > 0
+            winningTrades += 1
+            totalProfit += tradeProfit
+        else
+            losingTrades += 1
+            totalLoss += math.abs(tradeProfit)
+
+    winRate = totalTrades > 0 ? winningTrades / totalTrades * 100 : 0
+    avgWin = winningTrades > 0 ? totalProfit / winningTrades : 0
+    avgLoss = losingTrades > 0 ? totalLoss / losingTrades : 0
+    profitFactor = totalLoss > 0 ? totalProfit / totalLoss : 0
+    netProfit = strategy.netprofit
+
+    // Table headers
+    table.cell(statsTable, 0, 0, "📊 Order Block Stats", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.blue, 70))
+    table.merge_cells(statsTable, 0, 0, 1, 0)
+
+    // Metrics
+    table.cell(statsTable, 0, 1, "Total Trades", text_color=color.gray, text_size=size.small)
+    table.cell(statsTable, 1, 1, str.tostring(totalTrades), text_color=color.white, text_size=size.small)
+
+    table.cell(statsTable, 0, 2, "Winning", text_color=color.gray, text_size=size.small)
+    table.cell(statsTable, 1, 2, str.tostring(winningTrades), text_color=color.green, text_size=size.small)
+
+    table.cell(statsTable, 0, 3, "Losing", text_color=color.gray, text_size=size.small)
+    table.cell(statsTable, 1, 3, str.tostring(losingTrades), text_color=color.red, text_size=size.small)
+
+    table.cell(statsTable, 0, 4, "Win Rate", text_color=color.gray, text_size=size.small)
+    winColor = winRate >= 50 ? color.green : color.orange
+    table.cell(statsTable, 1, 4, str.tostring(winRate, "#.#") + "%", text_color=winColor, text_size=size.small)
+
+    table.cell(statsTable, 0, 5, "Profit Factor", text_color=color.gray, text_size=size.small)
+    pfColor = profitFactor >= 1.5 ? color.green : profitFactor >= 1 ? color.yellow : color.red
+    table.cell(statsTable, 1, 5, str.tostring(profitFactor, "#.##"), text_color=pfColor, text_size=size.small)
+
+    table.cell(statsTable, 0, 6, "Net Profit", text_color=color.gray, text_size=size.small)
+    npColor = netProfit > 0 ? color.green : color.red
+    table.cell(statsTable, 1, 6, str.tostring(netProfit, "#.##"), text_color=npColor, text_size=size.small)
+
+    table.cell(statsTable, 0, 7, "Avg Win", text_color=color.gray, text_size=size.small)
+    table.cell(statsTable, 1, 7, str.tostring(avgWin, "#.##"), text_color=color.green, text_size=size.small)
+
+    table.cell(statsTable, 0, 8, "Avg Loss", text_color=color.gray, text_size=size.small)
+    table.cell(statsTable, 1, 8, str.tostring(avgLoss, "#.##"), text_color=color.red, text_size=size.small)
+
+// === ALERTS ===
+
+alertcondition(bullishEntry, "Long Entry", "Order Block - Long Entry Signal")
+alertcondition(bearishEntry, "Short Entry", "Order Block - Short Entry Signal")
