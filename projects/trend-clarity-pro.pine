@@ -1,0 +1,706 @@
+//@version=6
+// ============================================================================
+// TREND CLARITY PRO v3.0 — Professional Decision Cockpit
+// ============================================================================
+// Project: Trend Clarity Pro
+// Type:    Indicator (overlay)
+// Purpose: Answer one question — "Is this trade worth taking right now?"
+//
+// Philosophy:  Context -> Setup -> Confirmation -> Execution
+//   Cloud       = Context        Corridor   = Value
+//   Arrow       = Action         Grade      = Confidence
+//   Pattern     = Confirmation   Trade Box  = Execution
+//   Dashboard   = Awareness      Alert      = Trade Plan   Risk Engine = Discipline
+//
+// The indicator does NOT predict the market. It evaluates probability and
+// trade quality through a weighted, multi-engine scoring system, then grades
+// the result and only signals when reward justifies risk.
+//
+// Repainting: HTF and higher-period levels use the [1] + lookahead_on
+//   non-repainting pattern. Signals are confirmed on bar close only.
+// ============================================================================
+
+indicator("Trend Clarity Pro v3.0", shorttitle="TCP v3", overlay=true, max_lines_count=200, max_labels_count=500, max_boxes_count=100)
+
+// ============================================================================
+// 1. INPUTS
+// ============================================================================
+
+// ---- Profile -------------------------------------------------------------
+grpProfile  = "⚙️ Profile"
+tradeMode   = input.string("Balanced", "Mode", options=["Conservative", "Balanced", "Aggressive"], tooltip="Conservative = stricter thresholds / fewer, higher-quality signals.\nAggressive = looser thresholds / more signals.", group=grpProfile)
+tradeStyle  = input.string("Intraday", "Trading Style", options=["Scalping", "Intraday", "Swing"], tooltip="Drives default HTF reference, corridor width and signal cooldown.", group=grpProfile)
+htfChoice   = input.string("Auto", "HTF Reference", options=["Auto", "15", "60", "240", "D", "W"], tooltip="Higher-timeframe used for trend alignment & dashboard. Auto derives it from Trading Style.", group=grpProfile)
+
+// ---- Core Engine Lengths --------------------------------------------------
+grpCore     = "📐 Core Lengths"
+emaFastLen  = input.int(9,  "EMA Fast",   minval=1, group=grpCore)
+emaMidLen   = input.int(21, "EMA Mid",    minval=1, group=grpCore)
+emaSlowLen  = input.int(50, "EMA Slow",   minval=1, group=grpCore)
+rsiLen      = input.int(14, "RSI Length", minval=1, group=grpCore)
+atrLen      = input.int(14, "ATR Length", minval=1, group=grpCore)
+swingLen    = input.int(5,  "Swing Lookback (bars)", minval=1, group=grpCore)
+volMaLen    = input.int(20, "Volume SMA Length", minval=1, group=grpCore)
+relVolMin   = input.float(1.25, "Relative Volume Min", minval=0.1, step=0.05, group=grpCore)
+
+// ---- Trend Corridor -------------------------------------------------------
+grpCorr     = "🛣️ Trend Corridor"
+fvlSource   = input.string("EMA50", "Fair Value Line", options=["EMA50", "VWAP", "EMA(HLC3)"], tooltip="The central 'fair value' reference around which the value corridor is drawn.", group=grpCorr)
+corrMultIn  = input.float(1.5, "Corridor ATR Multiplier", minval=0.1, step=0.1, group=grpCorr)
+
+// ---- Signal Engine --------------------------------------------------------
+grpSig      = "🎯 Signal Engine"
+baseThresh  = input.int(70, "Score Threshold", minval=1, maxval=100, tooltip="Minimum directional score required. Mode shifts this up/down.", group=grpSig)
+baseSep     = input.int(10, "Min Score Separation", minval=0, maxval=100, tooltip="Winning side must beat the other side by at least this much.", group=grpSig)
+baseCooldown= input.int(25, "Cooldown (bars)", minval=0, tooltip="Bars to wait between signals. Trading Style adjusts this.", group=grpSig)
+emFilter    = input.string("Relaxed", "Expected Move Filter", options=["Strict", "Relaxed", "Off"], tooltip="Strict = only VALID setups signal. Relaxed = VALID or WEAK. Off = ignore room-to-target.", group=grpSig)
+
+// ---- Trade Management -----------------------------------------------------
+grpTM       = "🧭 Trade Management"
+entryMode   = input.string("Close", "Entry", options=["Close", "Next Open", "Breakout"], group=grpTM)
+stopMode    = input.string("ATR", "Stop Mode", options=["ATR", "Swing", "EMA"], group=grpTM)
+atrStopMult = input.float(1.5, "ATR Stop Multiplier", minval=0.1, step=0.1, group=grpTM)
+tp1R        = input.float(1.5, "TP1 (R)", minval=0.1, step=0.1, group=grpTM)
+tp2R        = input.float(2.5, "TP2 (R)", minval=0.1, step=0.1, group=grpTM)
+tp3R        = input.float(4.0, "TP3 (R)", minval=0.1, step=0.1, group=grpTM)
+tradeBoxLen = input.int(30, "Trade Box Length (bars)", minval=5, group=grpTM)
+
+// ---- Risk Engine ----------------------------------------------------------
+grpRisk     = "🛡️ Risk Engine"
+maxTrades   = input.int(4, "Max Trades / Day", minval=1, group=grpRisk)
+maxDailyLoss= input.float(2.0, "Max Daily Loss (R)", minval=0.5, step=0.5, group=grpRisk)
+maxConsec   = input.int(3, "Max Consecutive Losses", minval=1, group=grpRisk)
+
+// ---- Alerts ---------------------------------------------------------------
+grpAlert    = "🔔 Alerts"
+minAlertGr  = input.string("A and Above", "Minimum Alert Grade", options=["A+", "A and Above", "B+ and Above", "B and Above"], group=grpAlert)
+
+// ---- Visuals --------------------------------------------------------------
+grpVis      = "🎨 Visuals"
+showCloud   = input.bool(true,  "Show Regime Cloud",   group=grpVis)
+showCorr    = input.bool(true,  "Show Trend Corridor", group=grpVis)
+showArrows  = input.bool(true,  "Show Signal Arrows",  group=grpVis)
+showLabels  = input.bool(true,  "Show Signal Labels",  group=grpVis)
+showDash    = input.bool(true,  "Show Dashboard",      group=grpVis)
+showBoxes   = input.bool(true,  "Show Trade Boxes",    group=grpVis)
+showLiq     = input.bool(true,  "Show Liquidity Levels", group=grpVis)
+dashPos     = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=grpVis)
+
+// ============================================================================
+// 2. PROFILE RESOLUTION
+// ============================================================================
+// Mode shifts threshold & separation; Style drives HTF, corridor width, cooldown.
+
+threshAdj  = tradeMode == "Conservative" ? 8 : tradeMode == "Aggressive" ? -8 : 0
+sepAdj     = tradeMode == "Conservative" ? 5 : tradeMode == "Aggressive" ? -3 : 0
+threshold  = math.min(100, math.max(1, baseThresh + threshAdj))
+minSep     = math.max(0, baseSep + sepAdj)
+
+styleHtf   = tradeStyle == "Scalping" ? "60" : tradeStyle == "Swing" ? "W" : "D"
+htfTf      = htfChoice == "Auto" ? styleHtf : htfChoice
+styleCool  = tradeStyle == "Scalping" ? 10 : tradeStyle == "Swing" ? 50 : baseCooldown
+cooldownBars = htfChoice == "Auto" ? styleCool : baseCooldown
+corrMult   = tradeStyle == "Scalping" ? math.min(corrMultIn, 1.0) : tradeStyle == "Swing" ? math.max(corrMultIn, 2.0) : corrMultIn
+
+// ============================================================================
+// 3. CORE CALCULATIONS
+// ============================================================================
+emaFast = ta.ema(close, emaFastLen)
+emaMid  = ta.ema(close, emaMidLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsiVal  = ta.rsi(close, rsiLen)
+atr     = ta.atr(atrLen)
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+volMa   = ta.sma(volume, volMaLen)
+relVol  = volMa > 0 ? volume / volMa : 1.0
+vwapVal = ta.vwap
+
+// Candle anatomy
+bodyTop  = math.max(open, close)
+bodyBot  = math.min(open, close)
+bodySize = math.abs(close - open)
+candRange= high - low
+upWick   = high - bodyTop
+dnWick   = bodyBot - low
+isGreen  = close > open
+isRed    = close < open
+
+// ---- HTF (non-repainting: last closed HTF bar) ----------------------------
+[hFast, hMid, hSlow] = request.security(syminfo.tickerid, htfTf, [ta.ema(close, emaFastLen)[1], ta.ema(close, emaMidLen)[1], ta.ema(close, emaSlowLen)[1]], lookahead=barmerge.lookahead_on)
+htfBull = hFast > hMid and hMid > hSlow
+htfBear = hFast < hMid and hMid < hSlow
+htfState = htfBull ? "BULL" : htfBear ? "BEAR" : "NEUTRAL"
+
+// ---- Liquidity reference levels (non-repainting) --------------------------
+pdH = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdL = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
+pwH = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+pwL = request.security(syminfo.tickerid, "W", low[1],  lookahead=barmerge.lookahead_on)
+
+// Session running high/low (resets each day)
+newDay = ta.change(time("D")) != 0
+var float sessH = na
+var float sessL = na
+if newDay or na(sessH)
+    sessH := high
+    sessL := low
+else
+    sessH := math.max(sessH, high)
+    sessL := math.min(sessL, low)
+
+// ---- Swing structure ------------------------------------------------------
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+var float lastPH  = na
+var float prevPH  = na
+var float lastPL  = na
+var float prevPL  = na
+if not na(ph)
+    prevPH := lastPH
+    lastPH := ph
+if not na(pl)
+    prevPL := lastPL
+    lastPL := pl
+hh = not na(lastPH) and not na(prevPH) and lastPH > prevPH
+lh = not na(lastPH) and not na(prevPH) and lastPH < prevPH
+hl = not na(lastPL) and not na(prevPL) and lastPL > prevPL
+ll = not na(lastPL) and not na(prevPL) and lastPL < prevPL
+breakoutUp = not na(lastPH) and close > lastPH
+breakdownDn= not na(lastPL) and close < lastPL
+
+// ============================================================================
+// 4. MARKET REGIME ENGINE
+// ============================================================================
+emaStackBull = emaFast > emaMid and emaMid > emaSlow
+emaStackBear = emaFast < emaMid and emaMid < emaSlow
+priceAbove   = close > emaSlow
+priceBelow   = close < emaSlow
+midRising    = emaMid > emaMid[3]
+midFalling   = emaMid < emaMid[3]
+atrExpanding = atr > atr[5]
+histUp       = histLine > histLine[1]
+histDn       = histLine < histLine[1]
+
+regime = "Neutral"
+if emaStackBull and priceAbove and midRising and rsiVal > 60 and atrExpanding
+    regime := "Strong Bull"
+else if emaStackBear and priceBelow and midFalling and rsiVal < 40 and atrExpanding
+    regime := "Strong Bear"
+else if emaStackBull and histLine > 0
+    regime := "Bull"
+else if emaStackBear and histLine < 0
+    regime := "Bear"
+else if htfBull and close < emaMid and close > emaSlow
+    regime := "Bull Pullback"
+else if htfBear and close > emaMid and close < emaSlow
+    regime := "Bear Pullback"
+else
+    regime := "Neutral"
+
+// Regime cloud colors
+cStrongBull = color.new(#0d47a1, 60)
+cBull       = color.new(#1976d2, 65)
+cBullPB     = color.new(#64b5f6, 70)
+cNeutral    = color.new(#9e9e9e, 75)
+cBearPB     = color.new(#ef9a9a, 70)
+cBear       = color.new(#e53935, 65)
+cStrongBear = color.new(#b71c1c, 60)
+regimeColor = switch regime
+    "Strong Bull"   => cStrongBull
+    "Bull"          => cBull
+    "Bull Pullback" => cBullPB
+    "Bear Pullback" => cBearPB
+    "Bear"          => cBear
+    "Strong Bear"   => cStrongBear
+    => cNeutral
+regimeBullish = regime == "Strong Bull" or regime == "Bull" or regime == "Bull Pullback"
+regimeBearish = regime == "Strong Bear" or regime == "Bear" or regime == "Bear Pullback"
+
+// ============================================================================
+// 5. TREND CORRIDOR ENGINE
+// ============================================================================
+fvl = fvlSource == "VWAP" ? vwapVal : fvlSource == "EMA(HLC3)" ? ta.ema(hlc3, emaSlowLen) : emaSlow
+corrUpper = fvl + atr * corrMult
+corrLower = fvl - atr * corrMult
+corrColor = regimeBullish ? color.new(color.blue, 90) : regimeBearish ? color.new(color.red, 90) : color.new(color.gray, 92)
+
+// ============================================================================
+// 6. SCORING ENGINES  (bull & bear, each max 100)
+// ============================================================================
+bull = 0.0
+bear = 0.0
+
+// ---- Trend Engine (25) ----------------------------------------------------
+// alignment 8, price position 5, slope 4, strength 4, htf 4
+trendBull = 0.0
+trendBear = 0.0
+trendBull += emaStackBull ? 8 : emaFast > emaMid ? 4 : 0
+trendBear += emaStackBear ? 8 : emaFast < emaMid ? 4 : 0
+trendBull += priceAbove ? 5 : 0
+trendBear += priceBelow ? 5 : 0
+trendBull += midRising ? 4 : 0
+trendBear += midFalling ? 4 : 0
+strengthRaw = atr > 0 ? math.abs(emaFast - emaSlow) / atr : 0
+strengthPts = math.min(4, strengthRaw * 2)
+trendBull += emaFast > emaSlow ? strengthPts : 0
+trendBear += emaFast < emaSlow ? strengthPts : 0
+trendBull += htfBull ? 4 : 0
+trendBear += htfBear ? 4 : 0
+bull += trendBull
+bear += trendBear
+
+// ---- Momentum Engine (15) -------------------------------------------------
+// rsi 6, macd 6, acceleration 3
+momBull = 0.0
+momBear = 0.0
+momBull += rsiVal > 55 ? math.min(6, (rsiVal - 50) / 5) : 0
+momBear += rsiVal < 45 ? math.min(6, (50 - rsiVal) / 5) : 0
+momBull += macdLine > signalLine and histLine > 0 ? 6 : macdLine > signalLine ? 3 : 0
+momBear += macdLine < signalLine and histLine < 0 ? 6 : macdLine < signalLine ? 3 : 0
+momBull += histUp ? 3 : 0
+momBear += histDn ? 3 : 0
+bull += momBull
+bear += momBear
+
+// ---- Volume Engine (15) ---------------------------------------------------
+// relVol 6, above-avg 5, expansion 4  (assigned to candle direction)
+volScore = 0.0
+volScore += relVol >= relVolMin ? 6 : relVol >= 1.0 ? 3 : 0
+volScore += volume > volMa ? 5 : 0
+volScore += volume > volume[1] ? 4 : 0
+volConfirmed = volume > volMa and relVol >= relVolMin
+bull += isGreen ? volScore : 0
+bear += isRed ? volScore : 0
+
+// ---- Volatility Engine (10) -----------------------------------------------
+// atr expansion 5, atr trend 3, range expansion 2 (assigned to direction)
+volaScore = 0.0
+volaScore += atrExpanding ? 5 : 0
+volaScore += atr > ta.sma(atr, volMaLen) ? 3 : 0
+volaScore += candRange > ta.sma(candRange, volMaLen) ? 2 : 0
+volaActive = atrExpanding or atr > ta.sma(atr, volMaLen)
+bull += (regimeBullish or isGreen) ? volaScore : 0
+bear += (regimeBearish or isRed) ? volaScore : 0
+
+// ---- Market Structure Engine (20) -----------------------------------------
+// HH/HL or LL/LH 10, breakout/breakdown 6, position vs last swing 4
+structBull = 0.0
+structBear = 0.0
+structBull += (hh ? 5 : 0) + (hl ? 5 : 0)
+structBear += (ll ? 5 : 0) + (lh ? 5 : 0)
+structBull += breakoutUp ? 6 : 0
+structBear += breakdownDn ? 6 : 0
+structBull += not na(lastPL) and close > lastPL ? 4 : 0
+structBear += not na(lastPH) and close < lastPH ? 4 : 0
+bull += structBull
+bear += structBear
+
+// ---- Liquidity Engine (15) ------------------------------------------------
+// vwap 5, prev-day break 4, weekly context 3, session hold 3
+liqBull = 0.0
+liqBear = 0.0
+liqBull += close > vwapVal ? 5 : 0
+liqBear += close < vwapVal ? 5 : 0
+liqBull += not na(pdH) and close > pdH ? 4 : not na(pdL) and close > pdL ? 2 : 0
+liqBear += not na(pdL) and close < pdL ? 4 : not na(pdH) and close < pdH ? 2 : 0
+liqBull += not na(pwH) and close > pwH ? 3 : not na(pwL) and close > pwL ? 1 : 0
+liqBear += not na(pwL) and close < pwL ? 3 : not na(pwH) and close < pwH ? 1 : 0
+liqBull += not na(sessL) and close > (sessL + (sessH - sessL) * 0.5) ? 3 : 0
+liqBear += not na(sessH) and close < (sessL + (sessH - sessL) * 0.5) ? 3 : 0
+bull += liqBull
+bear += liqBear
+
+// ============================================================================
+// 7. CANDLESTICK PATTERN ENGINE (10, confirmation only)
+// ============================================================================
+doji   = bodySize <= candRange * 0.1 and candRange > 0
+hammer = dnWick > bodySize * 2 and upWick < bodySize and candRange > 0
+invHammer = upWick > bodySize * 2 and dnWick < bodySize and candRange > 0
+shootStar = upWick > bodySize * 2 and dnWick < bodySize and isRed
+hangMan   = dnWick > bodySize * 2 and upWick < bodySize and isRed
+bullEngulf = isGreen and close[1] < open[1] and close >= open[1] and open <= close[1]
+bearEngulf = isRed and close[1] > open[1] and close <= open[1] and open >= close[1]
+piercing  = isGreen and close[1] < open[1] and open < close[1] and close > (open[1] + close[1]) / 2 and close < open[1]
+darkCloud = isRed and close[1] > open[1] and open > close[1] and close < (open[1] + close[1]) / 2 and close > open[1]
+morningStar = close[2] < open[2] and math.abs(close[1] - open[1]) < bodySize and isGreen and close > (open[2] + close[2]) / 2
+eveningStar = close[2] > open[2] and math.abs(close[1] - open[1]) < bodySize and isRed and close < (open[2] + close[2]) / 2
+threeWhite = isGreen and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2]
+threeBlack = isRed and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2]
+tweezerBot = math.abs(low - low[1]) <= atr * 0.1 and close[1] < open[1] and isGreen
+tweezerTop = math.abs(high - high[1]) <= atr * 0.1 and close[1] > open[1] and isRed
+
+// Context: pattern earns full weight only near a key level
+nearLevel(p) =>
+    tol = atr * 0.6
+    near = math.abs(p - emaMid) <= tol or math.abs(p - emaSlow) <= tol or math.abs(p - vwapVal) <= tol
+    near := near or (not na(pdH) and math.abs(p - pdH) <= tol) or (not na(pdL) and math.abs(p - pdL) <= tol)
+    near := near or (not na(pwH) and math.abs(p - pwH) <= tol) or (not na(pwL) and math.abs(p - pwL) <= tol)
+    near := near or (not na(lastPH) and math.abs(p - lastPH) <= tol) or (not na(lastPL) and math.abs(p - lastPL) <= tol)
+    near := near or math.abs(p - corrUpper) <= tol or math.abs(p - corrLower) <= tol
+    near
+inContext = nearLevel(close)
+ctxMult   = inContext ? 1.0 : 0.5
+
+bullPatternName = threeWhite ? "Three White Soldiers" : morningStar ? "Morning Star" : bullEngulf ? "Bullish Engulfing" : piercing ? "Piercing Line" : hammer ? "Hammer" : invHammer ? "Inverted Hammer" : tweezerBot ? "Tweezer Bottom" : ""
+bearPatternName = threeBlack ? "Three Black Crows" : eveningStar ? "Evening Star" : bearEngulf ? "Bearish Engulfing" : darkCloud ? "Dark Cloud Cover" : shootStar ? "Shooting Star" : hangMan ? "Hanging Man" : tweezerTop ? "Tweezer Top" : ""
+neutralPatternName = doji ? "Doji" : ""
+
+bullPattern = bullPatternName != ""
+bearPattern = bearPatternName != ""
+patternScoreBull = bullPattern ? 10 * ctxMult : 0
+patternScoreBear = bearPattern ? 10 * ctxMult : 0
+patternName = bullPattern ? bullPatternName : bearPattern ? bearPatternName : neutralPatternName != "" ? neutralPatternName : "None"
+
+// Patterns are confirmation: fold in as a capped bonus
+bullScore = math.min(100, bull + patternScoreBull)
+bearScore = math.min(100, bear + patternScoreBear)
+
+// ============================================================================
+// 8. GRADE ENGINE
+// ============================================================================
+gradeOf(s) =>
+    s >= 95 ? "A+" : s >= 85 ? "A" : s >= 80 ? "B+" : s >= 70 ? "B" : s >= 65 ? "C+" : s >= 60 ? "C" : "D"
+gradeRank(g) =>
+    g == "A+" ? 7 : g == "A" ? 6 : g == "B+" ? 5 : g == "B" ? 4 : g == "C+" ? 3 : g == "C" ? 2 : 1
+
+dominantBull = bullScore >= bearScore
+activeScore  = dominantBull ? bullScore : bearScore
+activeGrade  = gradeOf(activeScore)
+confidence   = activeScore >= 85 ? "HIGH" : activeScore >= 70 ? "MEDIUM" : "LOW"
+
+// ============================================================================
+// 9. CHOP FILTER
+// ============================================================================
+emaCompression = atr > 0 and math.abs(emaFast - emaSlow) / atr < 0.5
+rsiNeutral     = rsiVal >= 45 and rsiVal <= 55
+lowAtr         = atr < ta.sma(atr, volMaLen)
+rangeBound     = not na(sessH) and not na(sessL) and (sessH - sessL) < atr * 3
+isChop = emaCompression and rsiNeutral and lowAtr and rangeBound
+
+// ============================================================================
+// 10. TRADE LEVEL PROJECTION (used by Expected Move + Trade Box)
+// ============================================================================
+projEntry = entryMode == "Next Open" ? close : close
+longStopRaw  = stopMode == "ATR" ? projEntry - atr * atrStopMult : stopMode == "Swing" ? (na(lastPL) ? projEntry - atr * atrStopMult : lastPL) : emaMid
+shortStopRaw = stopMode == "ATR" ? projEntry + atr * atrStopMult : stopMode == "Swing" ? (na(lastPH) ? projEntry + atr * atrStopMult : lastPH) : emaMid
+longR  = math.max(projEntry - longStopRaw, atr * 0.25)
+shortR = math.max(shortStopRaw - projEntry, atr * 0.25)
+
+// ============================================================================
+// 11. EXPECTED MOVE ENGINE
+// ============================================================================
+// Room to nearest opposing liquidity level vs the TP2 distance requirement.
+nearestResAbove(p) =>
+    float best = na
+    for lvl in array.from(pdH, pwH, sessH, corrUpper, lastPH)
+        if not na(lvl) and lvl > p
+            best := na(best) ? lvl : math.min(best, lvl)
+    best
+nearestSupBelow(p) =>
+    float best = na
+    for lvl in array.from(pdL, pwL, sessL, corrLower, lastPL)
+        if not na(lvl) and lvl < p
+            best := na(best) ? lvl : math.max(best, lvl)
+    best
+
+resAbove = nearestResAbove(projEntry)
+supBelow = nearestSupBelow(projEntry)
+longRoom  = na(resAbove) ? atr * 100 : resAbove - projEntry
+shortRoom = na(supBelow) ? atr * 100 : projEntry - supBelow
+longTp2Dist  = longR * tp2R
+longTp1Dist  = longR * tp1R
+shortTp2Dist = shortR * tp2R
+shortTp1Dist = shortR * tp1R
+longEM  = longRoom >= longTp2Dist ? "VALID" : longRoom >= longTp1Dist ? "WEAK" : "BLOCKED"
+shortEM = shortRoom >= shortTp2Dist ? "VALID" : shortRoom >= shortTp1Dist ? "WEAK" : "BLOCKED"
+activeEM = dominantBull ? longEM : shortEM
+emPass(state) =>
+    emFilter == "Off" ? true : emFilter == "Relaxed" ? (state != "BLOCKED") : (state == "VALID")
+
+// ============================================================================
+// 12. RISK ENGINE — protection counters & lockout
+// ============================================================================
+var int    tradesToday   = 0
+var float  dailyR        = 0.0
+var int    consecLosses  = 0
+if newDay
+    tradesToday  := 0
+    dailyR       := 0.0
+
+lockout = tradesToday >= maxTrades or dailyR <= -maxDailyLoss or consecLosses >= maxConsec
+reducedRisk = consecLosses >= 2 and not lockout
+
+suggestedRisk(g) =>
+    base = g == "A+" ? 1.25 : g == "A" ? 1.0 : g == "B+" ? 0.75 : g == "B" ? 0.5 : g == "C+" ? 0.25 : g == "C" ? 0.10 : 0.0
+    reducedRisk ? base * 0.5 : base
+riskUnits = suggestedRisk(activeGrade)
+
+// ============================================================================
+// 13. SIGNAL ENGINE
+// ============================================================================
+var int lastSignalBar = na
+cooldownOk = na(lastSignalBar) or (bar_index - lastSignalBar) >= cooldownBars
+
+longRaw  = bullScore >= threshold and bullScore > bearScore and (bullScore - bearScore) >= minSep and not isChop and emPass(longEM)
+shortRaw = bearScore >= threshold and bearScore > bullScore and (bearScore - bullScore) >= minSep and not isChop and emPass(shortEM)
+
+longSignal  = longRaw  and cooldownOk and not lockout and barstate.isconfirmed
+shortSignal = shortRaw and cooldownOk and not lockout and barstate.isconfirmed
+anySignal   = longSignal or shortSignal
+if anySignal
+    lastSignalBar := bar_index
+    tradesToday   := tradesToday + 1
+
+// Alert grade gate
+minRankNeeded = minAlertGr == "A+" ? 7 : minAlertGr == "A and Above" ? 6 : minAlertGr == "B+ and Above" ? 5 : 4
+gradePassesAlert = gradeRank(activeGrade) >= minRankNeeded
+
+// ============================================================================
+// 14. TRADE STATE MACHINE  (entry / stop / targets / status)
+// ============================================================================
+var int    tradeDir   = 0       // 1 long, -1 short, 0 flat
+var float  tEntry     = na
+var float  tStop      = na
+var float  tTp1       = na
+var float  tTp2       = na
+var float  tTp3       = na
+var bool   tp1Done    = false
+var bool   tp2Done    = false
+var bool   tp3Done    = false
+var bool   beActive   = false
+var string tradeStatus= "FLAT"
+
+openTrade(dir, entry, stop, r) =>
+    [entry, stop, dir == 1 ? entry + r * tp1R : entry - r * tp1R, dir == 1 ? entry + r * tp2R : entry - r * tp2R, dir == 1 ? entry + r * tp3R : entry - r * tp3R]
+
+if longSignal
+    [e, s, t1, t2, t3] = openTrade(1, projEntry, longStopRaw, longR)
+    tradeDir := 1
+    tEntry := e
+    tStop  := s
+    tTp1   := t1
+    tTp2   := t2
+    tTp3   := t3
+    tp1Done := false
+    tp2Done := false
+    tp3Done := false
+    beActive := false
+    tradeStatus := "ACTIVE"
+if shortSignal
+    [e, s, t1, t2, t3] = openTrade(-1, projEntry, shortStopRaw, shortR)
+    tradeDir := -1
+    tEntry := e
+    tStop  := s
+    tTp1   := t1
+    tTp2   := t2
+    tTp3   := t3
+    tp1Done := false
+    tp2Done := false
+    tp3Done := false
+    beActive := false
+    tradeStatus := "ACTIVE"
+
+// Manage open trade on each confirmed bar after entry
+if tradeDir != 0 and not anySignal and barstate.isconfirmed
+    if tradeDir == 1
+        if low <= tStop
+            if not tp1Done
+                consecLosses := consecLosses + 1
+                dailyR := dailyR - 1.0
+                tradeStatus := "STOP HIT"
+            else
+                consecLosses := 0
+                dailyR := dailyR + (tp2Done ? tp2R : tp1R)
+                tradeStatus := "BREAKEVEN/RUNNER STOP"
+            tradeDir := 0
+        else
+            if high >= tTp1 and not tp1Done
+                tp1Done := true
+                beActive := true
+                tStop := tEntry
+                tradeStatus := "TP1 HIT"
+            if high >= tTp2 and not tp2Done
+                tp2Done := true
+                tradeStatus := "TP2 HIT"
+            if high >= tTp3 and not tp3Done
+                tp3Done := true
+                consecLosses := 0
+                dailyR := dailyR + tp3R
+                tradeStatus := "TP3 HIT"
+                tradeDir := 0
+            else if tp1Done
+                tradeStatus := tp2Done ? "RUNNER ACTIVE" : "BREAKEVEN"
+    else if tradeDir == -1
+        if high >= tStop
+            if not tp1Done
+                consecLosses := consecLosses + 1
+                dailyR := dailyR - 1.0
+                tradeStatus := "STOP HIT"
+            else
+                consecLosses := 0
+                dailyR := dailyR + (tp2Done ? tp2R : tp1R)
+                tradeStatus := "BREAKEVEN/RUNNER STOP"
+            tradeDir := 0
+        else
+            if low <= tTp1 and not tp1Done
+                tp1Done := true
+                beActive := true
+                tStop := tEntry
+                tradeStatus := "TP1 HIT"
+            if low <= tTp2 and not tp2Done
+                tp2Done := true
+                tradeStatus := "TP2 HIT"
+            if low <= tTp3 and not tp3Done
+                tp3Done := true
+                consecLosses := 0
+                dailyR := dailyR + tp3R
+                tradeStatus := "TP3 HIT"
+                tradeDir := 0
+            else if tp1Done
+                tradeStatus := tp2Done ? "RUNNER ACTIVE" : "BREAKEVEN"
+
+// ============================================================================
+// 15. VISUALS — Cloud, Corridor, Liquidity
+// ============================================================================
+pFast = plot(emaFast, "EMA Fast", color=color.new(color.aqua, 50), display=display.none)
+pMid  = plot(emaMid,  "EMA Mid",  color=color.new(color.orange, 50), display=display.none)
+plot(emaSlow, "EMA Slow", color=color.new(color.gray, 40), linewidth=2)
+
+fill(pFast, pMid, color=showCloud ? regimeColor : na, title="Regime Cloud")
+
+pUpper = plot(showCorr ? corrUpper : na, "Corridor Upper", color=color.new(color.gray, 60))
+pLower = plot(showCorr ? corrLower : na, "Corridor Lower", color=color.new(color.gray, 60))
+pFvl   = plot(showCorr ? fvl : na, "Fair Value Line", color=color.new(color.yellow, 40), linewidth=1)
+fill(pUpper, pLower, color=showCorr ? corrColor : na, title="Corridor Fill")
+
+// Liquidity levels
+plot(showLiq and not na(pdH) ? pdH : na, "Prev Day High", color=color.new(color.red, 50), style=plot.style_circles, linewidth=1)
+plot(showLiq and not na(pdL) ? pdL : na, "Prev Day Low",  color=color.new(color.green, 50), style=plot.style_circles, linewidth=1)
+plot(showLiq and not na(pwH) ? pwH : na, "Week High", color=color.new(color.maroon, 40), style=plot.style_circles, linewidth=1)
+plot(showLiq and not na(pwL) ? pwL : na, "Week Low",  color=color.new(color.teal, 40), style=plot.style_circles, linewidth=1)
+plot(showLiq ? vwapVal : na, "VWAP", color=color.new(color.purple, 30), linewidth=1)
+
+// ============================================================================
+// 16. VISUALS — Signal Arrows & Labels
+// ============================================================================
+arrowSize(g) =>
+    g == "A+" ? size.huge : g == "A" ? size.large : (g == "B+" or g == "B") ? size.normal : size.small
+
+if showArrows and longSignal
+    label.new(bar_index, low - atr * 0.5, "▲", style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=arrowSize(activeGrade))
+if showArrows and shortSignal
+    label.new(bar_index, high + atr * 0.5, "▼", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=arrowSize(activeGrade))
+
+if showLabels and longSignal
+    label.new(bar_index, low - atr * 1.3, activeGrade + " BUY\n" + str.tostring(math.round(bullScore)) + "/100", style=label.style_label_up, color=color.new(color.green, 30), textcolor=color.white, size=size.normal)
+if showLabels and shortSignal
+    label.new(bar_index, high + atr * 1.3, activeGrade + " SELL\n" + str.tostring(math.round(bearScore)) + "/100", style=label.style_label_down, color=color.new(color.red, 30), textcolor=color.white, size=size.normal)
+
+// ============================================================================
+// 17. VISUALS — Trade Box (entry / stop / targets / status)
+// ============================================================================
+var line  lnEntry = na
+var line  lnStop  = na
+var line  lnTp1   = na
+var line  lnTp2   = na
+var line  lnTp3   = na
+var box   bxStop  = na
+var box   bxTgt   = na
+var label lbStatus= na
+
+if showBoxes and anySignal
+    line.delete(lnEntry)
+    line.delete(lnStop)
+    line.delete(lnTp1)
+    line.delete(lnTp2)
+    line.delete(lnTp3)
+    box.delete(bxStop)
+    box.delete(bxTgt)
+    label.delete(lbStatus)
+    x2 = bar_index + tradeBoxLen
+    lnEntry := line.new(bar_index, tEntry, x2, tEntry, color=color.white, width=2, style=line.style_solid)
+    lnStop  := line.new(bar_index, tStop,  x2, tStop,  color=color.red, width=1, style=line.style_dashed)
+    lnTp1   := line.new(bar_index, tTp1,   x2, tTp1,   color=color.new(color.green, 30), width=1)
+    lnTp2   := line.new(bar_index, tTp2,   x2, tTp2,   color=color.new(color.green, 15), width=1)
+    lnTp3   := line.new(bar_index, tTp3,   x2, tTp3,   color=color.green, width=1)
+    bxStop  := box.new(bar_index, tEntry, x2, tStop, border_color=color.new(color.red, 60), bgcolor=color.new(color.red, 88))
+    bxTgt   := box.new(bar_index, tEntry, x2, tTp3, border_color=color.new(color.green, 60), bgcolor=color.new(color.green, 90))
+    lbStatus:= label.new(x2, tEntry, tradeStatus, style=label.style_label_left, color=color.new(color.blue, 30), textcolor=color.white, size=size.small)
+
+// Keep status label text in sync while trade is live
+if showBoxes and not na(lbStatus) and not anySignal and barstate.isconfirmed
+    label.set_text(lbStatus, tradeStatus)
+    if tradeDir != 0
+        label.set_color(lbStatus, tradeDir == 1 ? color.new(color.green, 30) : color.new(color.red, 30))
+    else
+        label.set_color(lbStatus, color.new(color.gray, 30))
+
+// ============================================================================
+// 18. DASHBOARD
+// ============================================================================
+tblPos = dashPos == "Top Left" ? position.top_left : dashPos == "Bottom Right" ? position.bottom_right : dashPos == "Bottom Left" ? position.bottom_left : dashPos == "Middle Right" ? position.middle_right : position.top_right
+var table dash = table.new(tblPos, 2, 14, bgcolor=color.new(#1c1c28, 10), border_color=color.new(color.gray, 60), border_width=1, frame_color=color.new(color.gray, 40), frame_width=1)
+
+dirColor = dominantBull ? color.new(#1976d2, 0) : color.new(#e53935, 0)
+gradeColor = activeScore >= 85 ? color.green : activeScore >= 70 ? color.new(color.green, 30) : activeScore >= 60 ? color.orange : color.red
+emColor = activeEM == "VALID" ? color.green : activeEM == "WEAK" ? color.orange : color.red
+statusTxt = lockout ? "🔒 LOCKOUT" : isChop ? "CHOP — WAIT" : anySignal ? "🚀 SIGNAL" : "READY"
+statusColor = lockout ? color.red : isChop ? color.orange : anySignal ? color.green : color.new(color.gray, 20)
+signalTxt = longSignal ? "BUY" : shortSignal ? "SELL" : isChop ? "WAIT" : "—"
+
+cellTitle(r, t) =>
+    table.cell(dash, 0, r, t, text_color=color.new(color.gray, 0), text_size=size.small, text_halign=text.align_left, bgcolor=color.new(#2a2a3a, 20))
+cellVal(r, t, c) =>
+    table.cell(dash, 1, r, t, text_color=c, text_size=size.small, text_halign=text.align_right, bgcolor=color.new(#1c1c28, 30))
+
+if showDash and barstate.islast
+    table.cell(dash, 0, 0, "TREND CLARITY PRO", text_color=color.white, text_size=size.normal, bgcolor=color.new(#0d47a1, 0))
+    table.cell(dash, 1, 0, "v3.0", text_color=color.new(color.gray, 0), text_size=size.small, bgcolor=color.new(#0d47a1, 0))
+    cellTitle(1, "HTF")
+    cellVal(1, htfTf + " " + htfState, htfBull ? color.green : htfBear ? color.red : color.gray)
+    cellTitle(2, "REGIME")
+    cellVal(2, regime, regimeBullish ? color.new(#42a5f5, 0) : regimeBearish ? color.new(#ef5350, 0) : color.gray)
+    cellTitle(3, "GRADE")
+    cellVal(3, activeGrade, gradeColor)
+    cellTitle(4, "SCORE")
+    cellVal(4, str.tostring(math.round(dominantBull ? bullScore : bearScore)) + "/100  (B" + str.tostring(math.round(bullScore)) + "/S" + str.tostring(math.round(bearScore)) + ")", dirColor)
+    cellTitle(5, "CONFIDENCE")
+    cellVal(5, confidence, confidence == "HIGH" ? color.green : confidence == "MEDIUM" ? color.orange : color.gray)
+    cellTitle(6, "SIGNAL")
+    cellVal(6, signalTxt, longSignal ? color.green : shortSignal ? color.red : color.gray)
+    cellTitle(7, "PATTERN")
+    cellVal(7, patternName, bullPattern ? color.green : bearPattern ? color.red : color.gray)
+    cellTitle(8, "EXPECTED MOVE")
+    cellVal(8, activeEM, emColor)
+    cellTitle(9, "VOLUME")
+    cellVal(9, volConfirmed ? "CONFIRMED" : "weak", volConfirmed ? color.green : color.gray)
+    cellTitle(10, "VOLATILITY")
+    cellVal(10, volaActive ? "ACTIVE" : "quiet", volaActive ? color.green : color.gray)
+    cellTitle(11, "RISK")
+    cellVal(11, str.tostring(riskUnits, "#.##") + "R" + (reducedRisk ? " ⚠" : ""), reducedRisk ? color.orange : color.new(color.white, 0))
+    cellTitle(12, "TRADE")
+    cellVal(12, tradeStatus + "  (" + str.tostring(tradesToday) + "/" + str.tostring(maxTrades) + ", " + str.tostring(dailyR, "#.#") + "R)", tradeDir == 1 ? color.green : tradeDir == -1 ? color.red : color.gray)
+    cellTitle(13, "STATUS")
+    cellVal(13, statusTxt, statusColor)
+
+// ============================================================================
+// 19. ALERTS
+// ============================================================================
+buildAlert(dir) =>
+    g = activeGrade
+    sc = dir == "LONG" ? bullScore : bearScore
+    e  = tEntry
+    s  = tStop
+    pat = dir == "LONG" ? (bullPattern ? bullPatternName : "None") : (bearPattern ? bearPatternName : "None")
+    em = dir == "LONG" ? longEM : shortEM
+    icon = dir == "LONG" ? "🚀" : "🔻"
+    icon + " " + g + " " + dir + " SIGNAL" + "\nTicker: " + syminfo.ticker + "\nTimeframe: " + timeframe.period + "\nGrade: " + g + "\nScore: " + str.tostring(math.round(sc)) + "\nHTF: " + htfState + "\nRegime: " + regime + "\nPattern: " + pat + "\nEntry: " + str.tostring(e, format.mintick) + "\nStop: " + str.tostring(s, format.mintick) + "\nTP1: " + str.tostring(tTp1, format.mintick) + "\nTP2: " + str.tostring(tTp2, format.mintick) + "\nTP3: " + str.tostring(tTp3, format.mintick) + "\nExpected Move: " + em + "\nRisk: " + str.tostring(suggestedRisk(g), "#.##") + "R"
+
+if longSignal and gradePassesAlert
+    alert(buildAlert("LONG"), alert.freq_once_per_bar_close)
+if shortSignal and gradePassesAlert
+    alert(buildAlert("SHORT"), alert.freq_once_per_bar_close)
+
+alertcondition(longSignal,  title="TCP Long Signal",  message="Trend Clarity Pro: LONG signal")
+alertcondition(shortSignal, title="TCP Short Signal", message="Trend Clarity Pro: SHORT signal")
+alertcondition(longSignal or shortSignal, title="TCP Any Signal", message="Trend Clarity Pro: new signal")
