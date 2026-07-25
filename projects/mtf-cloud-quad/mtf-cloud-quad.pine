@@ -1,0 +1,67 @@
+//@version=6
+// ─────────────────────────────────────────────
+// MTF Cloud Dots Quad V1
+// Sub-pane 4 dot rows — Daily, Hourly, 10Min, 1Min
+// [25] offset inside request.security
+// Works correctly on 1 minute chart
+// Requires B-ADJ ON for futures charts
+// ─────────────────────────────────────────────
+indicator("MTF Cloud Dots Quad V1", shorttitle="MTF-Cloud Quad V1", overlay=false)
+
+// ─────────────────────────────────────────────
+// DAILY
+// ─────────────────────────────────────────────
+float d_close = request.security(syminfo.tickerid, "D",  close)
+float d_top   = request.security(syminfo.tickerid, "D",  math.max(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+float d_bot   = request.security(syminfo.tickerid, "D",  math.min(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+color d_col   = d_close > d_top ? color.green : d_close < d_bot ? color.red : color.yellow
+
+// ─────────────────────────────────────────────
+// HOURLY
+// ─────────────────────────────────────────────
+float h_close = request.security(syminfo.tickerid, "60", close)
+float h_top   = request.security(syminfo.tickerid, "60", math.max(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+float h_bot   = request.security(syminfo.tickerid, "60", math.min(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+color h_col   = h_close > h_top ? color.green : h_close < h_bot ? color.red : color.yellow
+
+// ─────────────────────────────────────────────
+// 10 MIN
+// ─────────────────────────────────────────────
+float t_close = request.security(syminfo.tickerid, "10", close)
+float t_top   = request.security(syminfo.tickerid, "10", math.max(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+float t_bot   = request.security(syminfo.tickerid, "10", math.min(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+color t_col   = t_close > t_top ? color.green : t_close < t_bot ? color.red : color.yellow
+
+// ─────────────────────────────────────────────
+// 1 MIN
+// ─────────────────────────────────────────────
+float m_close = request.security(syminfo.tickerid, "1",  close)
+float m_top   = request.security(syminfo.tickerid, "1",  math.max(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+float m_bot   = request.security(syminfo.tickerid, "1",  math.min(((ta.highest(high, 9) + ta.lowest(low, 9)) / 2 + (ta.highest(high, 26) + ta.lowest(low, 26)) / 2) / 2, (ta.highest(high, 52) + ta.lowest(low, 52)) / 2)[25])
+color m_col   = m_close > m_top ? color.green : m_close < m_bot ? color.red : color.yellow
+
+// ─────────────────────────────────────────────
+// PLOTS — Daily=1 bottom, Hourly=2, 10Min=3, 1Min=4 top
+// ─────────────────────────────────────────────
+plot(0, display=display.none)
+plot(5, display=display.none)
+plot(1, "Daily",  color=d_col, linewidth=10, style=plot.style_circles)
+plot(2, "Hourly", color=h_col, linewidth=10, style=plot.style_circles)
+plot(3, "10 Min", color=t_col, linewidth=10, style=plot.style_circles)
+plot(4, "1 Min",  color=m_col, linewidth=10, style=plot.style_circles)
+
+// ─────────────────────────────────────────────
+// LABELS
+// ─────────────────────────────────────────────
+var label ld = na
+var label lh = na
+var label lt = na
+var label lm = na
+label.delete(ld)
+label.delete(lh)
+label.delete(lt)
+label.delete(lm)
+ld := label.new(bar_index, 1, "D",   style=label.style_label_left, color=color.new(color.black,100), textcolor=d_col, size=size.small)
+lh := label.new(bar_index, 2, "1H",  style=label.style_label_left, color=color.new(color.black,100), textcolor=h_col, size=size.small)
+lt := label.new(bar_index, 3, "10M", style=label.style_label_left, color=color.new(color.black,100), textcolor=t_col, size=size.small)
+lm := label.new(bar_index, 4, "1M",  style=label.style_label_left, color=color.new(color.black,100), textcolor=m_col, size=size.small)
