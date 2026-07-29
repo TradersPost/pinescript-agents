@@ -1,0 +1,605 @@
+//@version=6
+indicator("Order Block Trading Signals", "OB Signals", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Market Structure Settings
+swingLength = input.int(5, "Swing Length", minval=2, maxval=50, group="Market Structure",
+     tooltip="Length for pivot high/low detection. Lower = more sensitive, Higher = major swings only")
+showStructure = input.bool(true, "Show BOS/CHoCH Labels", group="Market Structure",
+     tooltip="Display Break of Structure and Change of Character labels on chart")
+structUpColor = input.color(color.new(#089981, 0), "Bullish", inline="struct", group="Market Structure")
+structDnColor = input.color(color.new(#f23645, 0), "Bearish", inline="struct", group="Market Structure")
+
+// Order Block Settings
+obShowCount = input.int(3, "Show Last N Order Blocks", minval=0, maxval=10, group="Order Blocks",
+     tooltip="Number of recent order blocks to display (0 to hide all)")
+obConstructionMode = input.string("Length", "Construction Method", options=["Length", "Full"], group="Order Blocks",
+     tooltip="Length: Use ATR-based sizing | Full: Use entire candle body")
+obAtrLength = input.int(5, "ATR Length", minval=1, maxval=50, group="Order Blocks")
+obBullColor = input.color(color.new(#089981, 85), "Bullish OB", inline="obcol", group="Order Blocks")
+obBearColor = input.color(color.new(#f23645, 85), "Bearish OB", inline="obcol", group="Order Blocks")
+obMitigatedColor = input.color(color.new(color.gray, 90), "Mitigated", group="Order Blocks")
+obExtend = input.bool(false, "Extend Order Blocks", group="Order Blocks")
+
+// Entry Signal Settings
+entryMethod = input.string("Close", "Entry Detection Method", options=["Close", "Wick", "50% Penetration"], group="Entry Signals",
+     tooltip="Close: Candle close in OB | Wick: Any touch | 50%: Price reaches OB midpoint")
+showEntryLabels = input.bool(true, "Show Entry Labels", group="Entry Signals")
+showTPSL = input.bool(true, "Show TP/SL Lines", group="Entry Signals")
+extendTPSL = input.bool(true, "Extend TP/SL Lines", group="Entry Signals")
+tpColor = input.color(color.new(#089981, 0), "TP Color", inline="tpsl", group="Entry Signals")
+slColor = input.color(color.new(#f23645, 0), "SL Color", inline="tpsl", group="Entry Signals")
+defaultRR = input.float(2.0, "Default Risk:Reward", minval=1.0, maxval=10.0, step=0.5, group="Entry Signals",
+     tooltip="Used when no structure level found for TP")
+
+// Alert Settings
+enableAlerts = input.bool(true, "Enable Alerts", group="Alerts")
+
+// Debug Settings
+showDebugPlots = input.bool(false, "Show Debug Plots", group="Debug",
+     tooltip="Show debugging information in Data Window")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TYPE DEFINITIONS
+// ════════════════════════════════════════════════════════════════════════════════
+
+type OrderBlock
+    float top
+    float bottom
+    float mid
+    int location
+    bool isBullish
+    bool isMitigated
+    int mitigatedBar
+    box displayBox
+
+type SwingPoint
+    float price
+    int barIndex
+    bool isHigh
+
+type MarketStructure
+    int trend  // 1 = bullish, -1 = bearish, 0 = neutral
+    float lastHighBreak
+    float lastLowBreak
+    int lastBreakBar
+    string lastBreakType  // "BOS" or "CHoCH"
+    SwingPoint lastHigh
+    SwingPoint lastLow
+
+type TradeSignal
+    bool isActive
+    bool isBullish
+    float entryPrice
+    float tpPrice
+    float slPrice
+    int entryBar
+    string status  // "active", "tp_hit", "sl_hit"
+    label entryLabel
+    line tpLine
+    line slLine
+    box obBox
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GLOBAL VARIABLES
+// ════════════════════════════════════════════════════════════════════════════════
+
+var MarketStructure ms = MarketStructure.new(
+     trend=0,
+     lastHighBreak=na,
+     lastLowBreak=na,
+     lastBreakBar=na,
+     lastBreakType=na,
+     lastHigh=SwingPoint.new(na, na, true),
+     lastLow=SwingPoint.new(na, na, false))
+
+var OrderBlock[] bullishOBs = array.new<OrderBlock>()
+var OrderBlock[] bearishOBs = array.new<OrderBlock>()
+
+var TradeSignal activeSignal = TradeSignal.new(
+     isActive=false,
+     isBullish=false,
+     entryPrice=na,
+     tpPrice=na,
+     slPrice=na,
+     entryBar=na,
+     status="inactive",
+     entryLabel=na,
+     tpLine=na,
+     slLine=na,
+     obBox=na)
+
+var label[] structLabels = array.new<label>()
+var line[] structLines = array.new<line>()
+
+// ════════════════════════════════════════════════════════════════════════════════
+// UTILITY FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate ATR for order block sizing
+calcATR(length) =>
+    ta.atr(length)
+
+// Check if price is in order block based on entry method
+isPriceInOB(ob, method) =>
+    result = false
+    if method == "Close"
+        result := close >= ob.bottom and close <= ob.top
+    else if method == "Wick"
+        result := (low <= ob.top and high >= ob.bottom)
+    else if method == "50% Penetration"
+        result := (low <= ob.mid and high >= ob.mid)
+    result
+
+// Clean up old objects
+cleanupObjects() =>
+    // Clean bullish OBs - remove excess order blocks beyond the display count
+    while array.size(bullishOBs) > obShowCount
+        // Remove from the end (oldest)
+        lastIndex = array.size(bullishOBs) - 1
+        ob = array.get(bullishOBs, lastIndex)
+        if not na(ob.displayBox)
+            box.delete(ob.displayBox)
+        array.remove(bullishOBs, lastIndex)
+
+    // Clean bearish OBs - remove excess order blocks beyond the display count
+    while array.size(bearishOBs) > obShowCount
+        // Remove from the end (oldest)
+        lastIndex = array.size(bearishOBs) - 1
+        ob = array.get(bearishOBs, lastIndex)
+        if not na(ob.displayBox)
+            box.delete(ob.displayBox)
+        array.remove(bearishOBs, lastIndex)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MARKET STRUCTURE DETECTION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Detect pivot highs and lows
+pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+pivotLow = ta.pivotlow(low, swingLength, swingLength)
+
+// Track swing points
+if not na(pivotHigh)
+    ms.lastHigh := SwingPoint.new(pivotHigh, bar_index - swingLength, true)
+
+if not na(pivotLow)
+    ms.lastLow := SwingPoint.new(pivotLow, bar_index - swingLength, true)
+
+// Detect BOS (Break of Structure) and CHoCH (Change of Character)
+bool bosDetected = false
+bool chochDetected = false
+bool bullishBreak = false
+bool bearishBreak = false
+string breakType = na
+
+// Check for bullish break
+if not na(ms.lastHigh.price) and close > ms.lastHigh.price
+    if ms.trend == 1
+        // Already bullish, this is a BOS
+        bosDetected := true
+        bullishBreak := true
+        breakType := "BOS"
+    else if ms.trend == -1
+        // Was bearish, this is a CHoCH
+        chochDetected := true
+        bullishBreak := true
+        breakType := "CHoCH"
+    else
+        // Was neutral, start bullish trend
+        bosDetected := true
+        bullishBreak := true
+        breakType := "BOS"
+
+    ms.trend := 1
+    ms.lastHighBreak := ms.lastHigh.price
+    ms.lastBreakBar := bar_index
+    ms.lastBreakType := breakType
+
+// Check for bearish break
+if not na(ms.lastLow.price) and close < ms.lastLow.price
+    if ms.trend == -1
+        // Already bearish, this is a BOS
+        bosDetected := true
+        bearishBreak := true
+        breakType := "BOS"
+    else if ms.trend == 1
+        // Was bullish, this is a CHoCH
+        chochDetected := true
+        bearishBreak := true
+        breakType := "CHoCH"
+    else
+        // Was neutral, start bearish trend
+        bosDetected := true
+        bearishBreak := true
+        breakType := "BOS"
+
+    ms.trend := -1
+    ms.lastLowBreak := ms.lastLow.price
+    ms.lastBreakBar := bar_index
+    ms.lastBreakType := breakType
+
+// Display structure breaks
+if showStructure and (bosDetected or chochDetected)
+    labelY = bullishBreak ? low : high
+    labelStyle = bullishBreak ? label.style_label_up : label.style_label_down
+    labelColor = bullishBreak ? structUpColor : structDnColor
+
+    lbl = label.new(
+         x=bar_index,
+         y=labelY,
+         text=breakType,
+         color=color.new(labelColor, 80),
+         textcolor=labelColor,
+         style=labelStyle,
+         size=size.small)
+    array.push(structLabels, lbl)
+
+    // Cleanup old labels
+    if array.size(structLabels) > 20
+        label.delete(array.shift(structLabels))
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ORDER BLOCK CREATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate ATR value (must be called every bar for consistency)
+atrValue = calcATR(obAtrLength)
+
+// Create order blocks after structure breaks
+if bullishBreak and bar_index > swingLength
+    // Find the last bearish candle before the break (order block)
+    obIndex = 0
+    for i = 1 to swingLength * 2
+        if close[i] < open[i]
+            obIndex := i
+            break
+
+    if obIndex > 0
+        obTop = obConstructionMode == "Full" ? high[obIndex] : math.min(high[obIndex], low[obIndex] + atrValue)
+        obBottom = low[obIndex]
+        obMid = (obTop + obBottom) / 2
+
+        // Create new bullish order block
+        newOB = OrderBlock.new(
+             top=obTop,
+             bottom=obBottom,
+             mid=obMid,
+             location=time[obIndex],
+             isBullish=true,
+             isMitigated=false,
+             mitigatedBar=na,
+             displayBox=na)
+
+        array.unshift(bullishOBs, newOB)
+
+if bearishBreak and bar_index > swingLength
+    // Find the last bullish candle before the break (order block)
+    obIndex = 0
+    for i = 1 to swingLength * 2
+        if close[i] > open[i]
+            obIndex := i
+            break
+
+    if obIndex > 0
+        obTop = high[obIndex]
+        obBottom = obConstructionMode == "Full" ? low[obIndex] : math.max(low[obIndex], high[obIndex] - atrValue)
+        obMid = (obTop + obBottom) / 2
+
+        // Create new bearish order block
+        newOB = OrderBlock.new(
+             top=obTop,
+             bottom=obBottom,
+             mid=obMid,
+             location=time[obIndex],
+             isBullish=false,
+             isMitigated=false,
+             mitigatedBar=na,
+             displayBox=na)
+
+        array.unshift(bearishOBs, newOB)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ORDER BLOCK MITIGATION CHECK
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Check if order blocks are mitigated
+if array.size(bullishOBs) > 0
+    for i = 0 to array.size(bullishOBs) - 1
+        ob = array.get(bullishOBs, i)
+        if not ob.isMitigated
+            // Bullish OB is mitigated when price closes below it
+            if close < ob.bottom
+                ob.isMitigated := true
+                ob.mitigatedBar := bar_index
+
+if array.size(bearishOBs) > 0
+    for i = 0 to array.size(bearishOBs) - 1
+        ob = array.get(bearishOBs, i)
+        if not ob.isMitigated
+            // Bearish OB is mitigated when price closes above it
+            if close > ob.top
+                ob.isMitigated := true
+                ob.mitigatedBar := bar_index
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ENTRY SIGNAL GENERATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Check for entry signals
+bool newBullishEntry = false
+bool newBearishEntry = false
+OrderBlock signalOB = na
+
+// Check active signal status
+if activeSignal.isActive
+    if activeSignal.status == "active"
+        // Check if TP hit
+        if activeSignal.isBullish and high >= activeSignal.tpPrice
+            activeSignal.status := "tp_hit"
+            if not na(activeSignal.entryLabel)
+                label.set_text(activeSignal.entryLabel, "LONG ✓")
+                label.set_color(activeSignal.entryLabel, color.new(#089981, 85))
+            if enableAlerts
+                alert("Take Profit Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
+                     " TP: " + str.tostring(activeSignal.tpPrice), alert.freq_once_per_bar)
+        else if activeSignal.isBullish == false and low <= activeSignal.tpPrice
+            activeSignal.status := "tp_hit"
+            if not na(activeSignal.entryLabel)
+                label.set_text(activeSignal.entryLabel, "SHORT ✓")
+                label.set_color(activeSignal.entryLabel, color.new(#089981, 85))
+            if enableAlerts
+                alert("Take Profit Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
+                     " TP: " + str.tostring(activeSignal.tpPrice), alert.freq_once_per_bar)
+
+        // Check if SL hit
+        if activeSignal.isBullish and low <= activeSignal.slPrice
+            activeSignal.status := "sl_hit"
+            if not na(activeSignal.entryLabel)
+                label.set_text(activeSignal.entryLabel, "LONG ✗")
+                label.set_color(activeSignal.entryLabel, color.new(#f23645, 85))
+            if enableAlerts
+                alert("Stop Loss Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
+                     " SL: " + str.tostring(activeSignal.slPrice), alert.freq_once_per_bar)
+        else if activeSignal.isBullish == false and high >= activeSignal.slPrice
+            activeSignal.status := "sl_hit"
+            if not na(activeSignal.entryLabel)
+                label.set_text(activeSignal.entryLabel, "SHORT ✗")
+                label.set_color(activeSignal.entryLabel, color.new(#f23645, 85))
+            if enableAlerts
+                alert("Stop Loss Hit! Entry: " + str.tostring(activeSignal.entryPrice) +
+                     " SL: " + str.tostring(activeSignal.slPrice), alert.freq_once_per_bar)
+
+// Look for new entry signals only if no active signal
+if not activeSignal.isActive or activeSignal.status != "active"
+    // Check bullish entry (price returns to bullish OB in uptrend)
+    if ms.trend == 1 and array.size(bullishOBs) > 0
+        ob = array.get(bullishOBs, 0)
+        if not ob.isMitigated and isPriceInOB(ob, entryMethod)
+            newBullishEntry := true
+            signalOB := ob
+
+    // Check bearish entry (price returns to bearish OB in downtrend)
+    if ms.trend == -1 and array.size(bearishOBs) > 0
+        ob = array.get(bearishOBs, 0)
+        if not ob.isMitigated and isPriceInOB(ob, entryMethod)
+            newBearishEntry := true
+            signalOB := ob
+
+// Create new trade signal
+if newBullishEntry and not na(signalOB)
+    // Calculate TP (next swing high or use R:R)
+    tpLevel = na(ms.lastHigh.price) ?
+         close + (close - signalOB.bottom) * defaultRR :
+         math.max(ms.lastHigh.price, close + (close - signalOB.bottom) * defaultRR)
+
+    // Calculate SL (below order block)
+    slLevel = signalOB.bottom
+
+    // Calculate Risk:Reward
+    risk = close - slLevel
+    reward = tpLevel - close
+    rr = risk > 0 ? reward / risk : defaultRR
+
+    // Create entry label
+    if showEntryLabels
+        activeSignal.entryLabel := label.new(
+             x=bar_index,
+             y=low,
+             text="LONG",
+             color=color.new(#089981, 90),
+             textcolor=#089981,
+             style=label.style_label_up,
+             size=size.small)
+
+    // Create TP/SL lines
+    if showTPSL
+        ext = extendTPSL ? extend.right : extend.none
+        activeSignal.tpLine := line.new(
+             x1=bar_index, y1=tpLevel, x2=bar_index+10, y2=tpLevel,
+             color=tpColor, style=line.style_dashed, width=1, extend=ext)
+        activeSignal.slLine := line.new(
+             x1=bar_index, y1=slLevel, x2=bar_index+10, y2=slLevel,
+             color=slColor, style=line.style_dashed, width=1, extend=ext)
+
+    // Update signal state
+    activeSignal.isActive := true
+    activeSignal.isBullish := true
+    activeSignal.entryPrice := close
+    activeSignal.tpPrice := tpLevel
+    activeSignal.slPrice := slLevel
+    activeSignal.entryBar := bar_index
+    activeSignal.status := "active"
+
+    if enableAlerts
+        alert("New LONG Signal! Entry: " + str.tostring(close) +
+             " TP: " + str.tostring(tpLevel) + " SL: " + str.tostring(slLevel),
+             alert.freq_once_per_bar)
+
+if newBearishEntry and not na(signalOB)
+    // Calculate TP (next swing low or use R:R)
+    tpLevel = na(ms.lastLow.price) ?
+         close - (signalOB.top - close) * defaultRR :
+         math.min(ms.lastLow.price, close - (signalOB.top - close) * defaultRR)
+
+    // Calculate SL (above order block)
+    slLevel = signalOB.top
+
+    // Calculate Risk:Reward
+    risk = slLevel - close
+    reward = close - tpLevel
+    rr = risk > 0 ? reward / risk : defaultRR
+
+    // Create entry label
+    if showEntryLabels
+        activeSignal.entryLabel := label.new(
+             x=bar_index,
+             y=high,
+             text="SHORT",
+             color=color.new(#f23645, 90),
+             textcolor=#f23645,
+             style=label.style_label_down,
+             size=size.small)
+
+    // Create TP/SL lines
+    if showTPSL
+        ext = extendTPSL ? extend.right : extend.none
+        activeSignal.tpLine := line.new(
+             x1=bar_index, y1=tpLevel, x2=bar_index+10, y2=tpLevel,
+             color=tpColor, style=line.style_dashed, width=1, extend=ext)
+        activeSignal.slLine := line.new(
+             x1=bar_index, y1=slLevel, x2=bar_index+10, y2=slLevel,
+             color=slColor, style=line.style_dashed, width=1, extend=ext)
+
+    // Update signal state
+    activeSignal.isActive := true
+    activeSignal.isBullish := false
+    activeSignal.entryPrice := close
+    activeSignal.tpPrice := tpLevel
+    activeSignal.slPrice := slLevel
+    activeSignal.entryBar := bar_index
+    activeSignal.status := "active"
+
+    if enableAlerts
+        alert("New SHORT Signal! Entry: " + str.tostring(close) +
+             " TP: " + str.tostring(tpLevel) + " SL: " + str.tostring(slLevel),
+             alert.freq_once_per_bar)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Clean up old order blocks
+if barstate.islast
+    cleanupObjects()
+
+// Display bullish order blocks
+if obShowCount > 0 and array.size(bullishOBs) > 0
+    displayCount = math.min(obShowCount, array.size(bullishOBs))
+    for i = 0 to displayCount - 1
+        ob = array.get(bullishOBs, i)
+
+        // Delete old box if exists
+        if not na(ob.displayBox)
+            box.delete(ob.displayBox)
+
+        // Create order block visualization
+        if not ob.isMitigated
+            // Active order block - show as filled box extending right
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obBullColor,
+                 xloc=xloc.bar_time)
+
+            // Extension box
+            if obExtend
+                box.new(
+                     left=time,
+                     top=ob.top,
+                     right=time + 1,
+                     bottom=ob.bottom,
+                     border_color=na,
+                     bgcolor=obBullColor,
+                     xloc=xloc.bar_time,
+                     extend=extend.right)
+        else
+            // Mitigated order block - show as grayed out
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obMitigatedColor,
+                 xloc=xloc.bar_time)
+
+// Display bearish order blocks
+if obShowCount > 0 and array.size(bearishOBs) > 0
+    displayCount = math.min(obShowCount, array.size(bearishOBs))
+    for i = 0 to displayCount - 1
+        ob = array.get(bearishOBs, i)
+
+        // Delete old box if exists
+        if not na(ob.displayBox)
+            box.delete(ob.displayBox)
+
+        // Create order block visualization
+        if not ob.isMitigated
+            // Active order block - show as filled box extending right
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obBearColor,
+                 xloc=xloc.bar_time)
+
+            // Extension box
+            if obExtend
+                box.new(
+                     left=time,
+                     top=ob.top,
+                     right=time + 1,
+                     bottom=ob.bottom,
+                     border_color=na,
+                     bgcolor=obBearColor,
+                     xloc=xloc.bar_time,
+                     extend=extend.right)
+        else
+            // Mitigated order block - show as grayed out
+            ob.displayBox := box.new(
+                 left=ob.location,
+                 top=ob.top,
+                 right=time,
+                 bottom=ob.bottom,
+                 border_color=na,
+                 bgcolor=obMitigatedColor,
+                 xloc=xloc.bar_time)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DEBUG PLOTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+plot(showDebugPlots ? ms.trend : na, "Current Trend", display=display.data_window)
+plot(showDebugPlots ? array.size(bullishOBs) : na, "Bullish OB Count", display=display.data_window)
+plot(showDebugPlots ? array.size(bearishOBs) : na, "Bearish OB Count", display=display.data_window)
+plot(showDebugPlots and activeSignal.isActive ? 1 : 0, "Active Signal", display=display.data_window)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERT CONDITIONS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(newBullishEntry, "New Long Signal", "New LONG entry signal detected")
+alertcondition(newBearishEntry, "New Short Signal", "New SHORT entry signal detected")
+alertcondition(activeSignal.status == "tp_hit", "Take Profit Hit", "Take profit level reached")
+alertcondition(activeSignal.status == "sl_hit", "Stop Loss Hit", "Stop loss level hit")
+
+// End of indicator
