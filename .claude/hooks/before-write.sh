@@ -6,7 +6,11 @@ FILE_PATH="$1"
 FILE_CONTENT="$2"
 
 # Get the absolute path of the project root
+# Normalize to Windows (MSYS) form so it matches the Windows-form file paths
+# the Claude Code harness passes in. Without this the prefix-strip
+# ${FILE_PATH#$PROJECT_ROOT/} never matches under Git Bash.
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT_ROOT="$(cygpath -m "$PROJECT_ROOT")"
 
 # Check lock state
 LOCK_STATE="unlocked"  # Default to unlocked for development

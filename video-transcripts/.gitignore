@@ -1,0 +1,5 @@
+# Generated transcript outputs stay local (copyrighted lecture content,
+# several MB). Re-generate with:  python fetch_all.py
+*.txt
+index.json
+__pycache__/
