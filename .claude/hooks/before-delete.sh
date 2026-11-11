@@ -4,7 +4,10 @@
 FILE_PATH="$1"
 
 # Get the absolute path of the project root
+# Normalize to Windows (MSYS) form to match the Windows-form file paths
+# the Claude Code harness passes in.
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT_ROOT="$(cygpath -m "$PROJECT_ROOT")"
 
 # Check lock state
 LOCK_STATE="unlocked"  # Default to unlocked for development
